@@ -89,7 +89,7 @@ function App() {
           color: 'blue-500',
           alive: true,
           state: 'idle',
-          radius: 10,
+          radius: 12,
         };
         newSoldiers.push(soldier);
       }
@@ -115,11 +115,13 @@ function App() {
           color: 'red-500',
           alive: true,
           state: 'idle',
-          radius: 10,
+          radius: 12,
         };
         newSoldiers.push(soldier);
       }
 
+      // Resolve any initial overlaps from formation layout
+      resolveOverlaps(newSoldiers, battlefieldWidth, battlefieldHeight);
       setSoldiers(newSoldiers);
       setArmy1Stats(prev => ({ ...prev, aliveCount: rows * columns }));
       setArmy2Stats(prev => ({ ...prev, aliveCount: rows * columns }));
@@ -294,23 +296,31 @@ function App() {
             soldier.state = 'moving';
 
             // Calculate desired movement
-            let moveX = (dx / distance) * soldier.speed;
-            let moveY = (dy / distance) * soldier.speed;
+            let moveX = (dx / (distance || 1)) * soldier.speed;
+            let moveY = (dy / (distance || 1)) * soldier.speed;
 
-            // Collision avoidance with all other soldiers
-            const otherSoldiers = soldiers.filter((s) => s.id !== soldier.id && s.alive);
-            const collisions = detectCollisions(soldier, otherSoldiers);
-
-            if (collisions.length > 0) {
-              // Adjust movement to avoid collision
-              collisions.forEach((other) => {
-                const diffX = soldier.x - other.x;
-                const diffY = soldier.y - other.y;
-                const dist = Math.hypot(diffX, diffY);
-                if (dist === 0) return;
-                moveX += (diffX / dist) * soldier.speed * 0.5;
-                moveY += (diffY / dist) * soldier.speed * 0.5;
-              });
+            // Separation steering from nearby units
+            const neighbors = soldiers.filter((s) => s.id !== soldier.id && s.alive);
+            let sepX = 0;
+            let sepY = 0;
+            let neighborCount = 0;
+            neighbors.forEach((other) => {
+              const ndx = soldier.x - other.x;
+              const ndy = soldier.y - other.y;
+              const nd = Math.hypot(ndx, ndy);
+              const desired = soldier.radius + other.radius + 4; // desired separation
+              if (nd > 0 && nd < desired) {
+                const weight = (desired - nd) / desired; // stronger when closer
+                sepX += (ndx / nd) * weight;
+                sepY += (ndy / nd) * weight;
+                neighborCount++;
+              }
+            });
+            if (neighborCount > 0) {
+              // Normalize separation and scale
+              const scale = soldier.speed * 0.8;
+              moveX += (sepX / neighborCount) * scale;
+              moveY += (sepY / neighborCount) * scale;
             }
 
             soldier.x += moveX;
@@ -389,6 +399,8 @@ function App() {
         });
       });
 
+      // After movement/attacks, resolve overlaps to prevent stacking
+      resolveOverlaps(updatedSoldiers, battlefieldWidth, battlefieldHeight);
       setSoldiers(updatedSoldiers);
       animationFrameId = requestAnimationFrame(updateSimulation);
     };
@@ -431,6 +443,43 @@ function App() {
       }
     });
     return collisions;
+  };
+
+  // Enforce non-overlapping by resolving pairwise overlaps (circle bounds)
+  const resolveOverlaps = (units, width, height) => {
+    const maxIterations = 6;
+    const padding = 1.5; // extra spacing
+    for (let iter = 0; iter < maxIterations; iter++) {
+      let anyMoved = false;
+      for (let i = 0; i < units.length; i++) {
+        const a = units[i];
+        if (!a.alive) continue;
+        for (let j = i + 1; j < units.length; j++) {
+          const b = units[j];
+          if (!b.alive) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy);
+          const minDist = a.radius + b.radius + padding;
+          if (dist === 0 || dist < minDist) {
+            const overlap = (minDist - (dist || 0.001)) / 2;
+            const nx = (dist === 0 ? (Math.random() - 0.5) : dx) / (dist || 1);
+            const ny = (dist === 0 ? (Math.random() - 0.5) : dy) / (dist || 1);
+            // Push both units apart equally
+            a.x -= nx * overlap;
+            a.y -= ny * overlap;
+            b.x += nx * overlap;
+            b.y += ny * overlap;
+            anyMoved = true;
+          }
+        }
+        // Clamp to battlefield bounds
+        a.x = Math.max(a.radius, Math.min(width - a.radius, a.x));
+        a.y = Math.max(a.radius, Math.min(height - a.radius, a.y));
+      }
+      if (!anyMoved) break;
+    }
+    return units;
   };
 
   return (
