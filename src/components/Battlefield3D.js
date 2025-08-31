@@ -280,7 +280,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             actions.idle = fallback;
           }
 
-          entry = { object3D: cloned, mixer, actions, removeAt: null, hasPlayedDeath: false, currentAnimation: null };
+          entry = { object3D: cloned, mixer, actions, removeAt: null, hasPlayedDeath: false, currentAnimation: null, deathHandler: null };
           soldierObjectsRef.current.set(soldier.id, entry);
         }
 
@@ -303,9 +303,6 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
         let targetAnimation = 'idle';
         if (!soldier.alive && actions.death) {
           targetAnimation = 'death';
-          if (!entry.removeAt) {
-            entry.removeAt = Date.now() + 2000; // ~2s grace to show death
-          }
         } else if (soldier.state === 'attacking' && actions.attack) {
           targetAnimation = 'attack';
         } else if ((soldier.state === 'moving' || soldier.state === 'retreating') && actions.walk) {
@@ -329,7 +326,18 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             getAction('death').reset().setLoop(THREE.LoopOnce, 1).play();
             entry.hasPlayedDeath = true;
             entry.currentAnimation = 'death';
-            if (!entry.removeAt) entry.removeAt = Date.now() + 2000;
+            // When death animation finishes, schedule removal shortly after
+            if (!entry.deathHandler) {
+              const onFinish = (e) => {
+                if (e.action === actions.death) {
+                  entry.removeAt = Date.now() + 100;
+                  entry.deathHandler = null;
+                  mixer.removeEventListener('finished', onFinish);
+                }
+              };
+              mixer.addEventListener('finished', onFinish);
+              entry.deathHandler = onFinish;
+            }
           }
           // Do not restart death after it finishes
         } else {
@@ -346,7 +354,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
           }
         }
         const keepAliveForDeath = !soldier.alive && entry.removeAt && Date.now() < entry.removeAt;
-        if (soldier.alive || keepAliveForDeath) {
+        const deathPlaying = !soldier.alive && entry.currentAnimation === 'death' && !entry.removeAt;
+        if (soldier.alive || keepAliveForDeath || deathPlaying) {
           activeIds.add(soldier.id);
         } else if (!soldier.alive && entry.removeAt && Date.now() >= entry.removeAt) {
           // Spawn a small red puddle at the death location
@@ -366,8 +375,19 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       const toRemove = [];
       soldierObjectsRef.current.forEach((entry, id) => {
         if (!activeIds.has(id)) {
-          console.log('Removing soldier:', id, 'from scene');
           scene.remove(entry.object3D);
+          // Dispose geometries/materials to avoid leaks
+          try {
+            entry.object3D.traverse((obj) => {
+              if (obj.isMesh) {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                  if (Array.isArray(obj.material)) obj.material.forEach((m) => m && m.dispose && m.dispose());
+                  else if (obj.material.dispose) obj.material.dispose();
+                }
+              }
+            });
+          } catch (_) {}
           toRemove.push(id);
         }
       });
