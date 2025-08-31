@@ -19,9 +19,33 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const soldierObjectsRef = useRef(new Map()); // soldierId -> { object3D, mixer, actions }
   const clockRef = useRef(new THREE.Clock());
 
-  // Helper function to find animation by name
+  // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
-    return animations.find(clip => clip.name === name);
+    if (!animations || animations.length === 0) return null;
+    // Exact match first
+    const exact = animations.find((clip) => clip.name === name);
+    if (exact) return exact;
+    // Case-insensitive contains fallback
+    const lowered = name.toLowerCase();
+    const contains = animations.find((clip) => clip.name.toLowerCase().includes(lowered));
+    if (contains) return contains;
+    // Heuristic fallbacks by intent
+    const heuristics = {
+      attack: ['attack', 'slash', 'strike', 'chop', 'melee'],
+      walk: ['walk', 'run', 'move'],
+      idle: ['idle', 'breath', 'stand'],
+      death: ['death', 'die'],
+    };
+    let keywords = [];
+    if (lowered.includes('attack') || lowered.includes('chop') || lowered.includes('melee')) keywords = heuristics.attack;
+    else if (lowered.includes('walk')) keywords = heuristics.walk;
+    else if (lowered.includes('idle')) keywords = heuristics.idle;
+    else if (lowered.includes('death')) keywords = heuristics.death;
+    for (const kw of keywords) {
+      const byKw = animations.find((clip) => clip.name.toLowerCase().includes(kw));
+      if (byKw) return byKw;
+    }
+    return null;
   };
 
 
@@ -129,14 +153,11 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       let rafId = 0;
       const animate = () => {
         rafId = requestAnimationFrame(animate);
-        // TEMPORARILY DISABLE MIXER UPDATES
-        /*
         // Advance any active mixers when using GLTFs
         const delta = clockRef.current.getDelta();
         soldierObjectsRef.current.forEach((entry) => {
           if (entry.mixer) entry.mixer.update(delta);
         });
-        */
         newRenderer.render(newScene, newCamera);
       };
       animate();
@@ -189,17 +210,30 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
           console.log('Soldier created:', soldier.id, 'meshes:', meshCount, 'scale:', cloned.scale.x, 'added to scene');
           const mixer = new THREE.AnimationMixer(cloned);
 
-          // Set up animation actions
+          // Set up animation actions with safe fallbacks
           const actions = {};
-          const attackClip = findAnimation(animations, '1H_Melee_Attack_Chop');
-          const deathClip = findAnimation(animations, 'Death_A');
-          const idleClip = findAnimation(animations, 'Idle');
-          const walkClip = findAnimation(animations, 'Walking_A');
+          const attackClip = findAnimation(animations, '1H_Melee_Attack_Chop') || findAnimation(animations, 'attack');
+          const deathClip = findAnimation(animations, 'Death_A') || findAnimation(animations, 'death');
+          const idleClip = findAnimation(animations, 'Idle') || findAnimation(animations, 'idle');
+          const walkClip = findAnimation(animations, 'Walking_A') || findAnimation(animations, 'walk');
 
-          if (attackClip) actions.attack = mixer.clipAction(attackClip);
-          if (deathClip) actions.death = mixer.clipAction(deathClip);
-          if (idleClip) actions.idle = mixer.clipAction(idleClip);
-          if (walkClip) actions.walk = mixer.clipAction(walkClip);
+          if (attackClip) {
+            actions.attack = mixer.clipAction(attackClip);
+            actions.attack.setLoop(THREE.LoopRepeat, Infinity);
+          }
+          if (deathClip) {
+            actions.death = mixer.clipAction(deathClip);
+            actions.death.setLoop(THREE.LoopOnce, 1);
+            actions.death.clampWhenFinished = true;
+          }
+          if (idleClip) {
+            actions.idle = mixer.clipAction(idleClip);
+            actions.idle.setLoop(THREE.LoopRepeat, Infinity);
+          }
+          if (walkClip) {
+            actions.walk = mixer.clipAction(walkClip);
+            actions.walk.setLoop(THREE.LoopRepeat, Infinity);
+          }
 
           entry = { object3D: cloned, mixer, actions };
           soldierObjectsRef.current.set(soldier.id, entry);
@@ -219,32 +253,36 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
           targetRotation = Math.atan2(dx, dy);
         }
         object3D.rotation.y = targetRotation;
-      });
 
-        // TEMPORARILY DISABLE ANIMATIONS TO TEST VISIBILITY
         // Play animations based on soldier state
-        /*
         let targetAnimation = 'idle';
-
         if (!soldier.alive && actions.death) {
           targetAnimation = 'death';
         } else if (soldier.state === 'attacking' && actions.attack) {
           targetAnimation = 'attack';
         } else if ((soldier.state === 'moving' || soldier.state === 'retreating') && actions.walk) {
           targetAnimation = 'walk';
+        } else if (actions.idle) {
+          targetAnimation = 'idle';
         }
 
-        // Stop all animations and play the target one
-        Object.keys(actions).forEach(key => {
-          if (key !== targetAnimation) {
-            actions[key].stop();
+        // Cross-fade to the target animation if different
+        const allKeys = Object.keys(actions);
+        const playing = allKeys.find((k) => actions[k].isRunning());
+        if (actions[targetAnimation]) {
+          const targetAction = actions[targetAnimation];
+          if (playing && playing !== targetAnimation) {
+            targetAction.reset().fadeIn(0.15).play();
+            actions[playing].fadeOut(0.15);
+          } else if (!targetAction.isRunning()) {
+            targetAction.reset().play();
           }
-        });
-
-        if (actions[targetAnimation] && !actions[targetAnimation].isRunning()) {
-          actions[targetAnimation].reset().play();
+        } else if (actions.idle && targetAnimation !== 'idle') {
+          // Fallback to idle if expected action missing
+          const idleAction = actions.idle;
+          if (!idleAction.isRunning()) idleAction.reset().play();
         }
-        */
+      });
 
       // Remove stale soldier objects
       const toRemove = [];
