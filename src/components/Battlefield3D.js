@@ -5,9 +5,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { initNav, buildNavForScene } from '../nav/nav';
+import { initNav, buildNavForScene, getNavResources, NAV_WORLD_SCALE } from '../nav/nav';
+import { NavMeshHelper } from '@recast-navigation/three';
 
-function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
+function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, showNavMesh }) {
   const mountRef = useRef(null);
   const controlsRef = useRef(null);
   const sceneRef = useRef(null);
@@ -21,6 +22,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const soldierObjectsRef = useRef(new Map()); // soldierId -> { object3D, mixer, actions }
   const clockRef = useRef(new THREE.Clock());
   const puddlesRef = useRef([]); // { mesh, removeAt }
+  const debugGroupRef = useRef(null); // nav path debug
+  const navHelperRef = useRef(null); // navmesh debug helper
 
   // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
@@ -114,7 +117,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       newScene.add(directionalLight);
 
       // Ground plane (slightly larger than battlefield dimensions to avoid edge artifacts)
-      const groundScale = 4; // larger to fill view in oblique angles
+      const groundScale = NAV_WORLD_SCALE; // larger to fill view in oblique angles
       const groundGeometry = new THREE.PlaneGeometry(battlefieldWidth * groundScale, battlefieldHeight * groundScale);
       const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x4a5d23 });
       const ground = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -126,8 +129,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       const navFloorsGroup = new THREE.Group();
       const worldHalfW = (battlefieldWidth * groundScale) / 2;
       const worldDepth = battlefieldHeight * groundScale;
-      const corridorWidth = Math.max(120, Math.min(260, battlefieldHeight * 0.18)); // narrow in Z
-      const corridorLength = Math.max(400, Math.min(battlefieldWidth * 0.5, 900)); // long in X
+      const corridorWidth = Math.max(160, Math.min(320, battlefieldHeight * 0.22)); // widen for connectivity
+      const corridorLength = Math.max(500, Math.min(battlefieldWidth * 0.6, 1100)); // longer to overlap tiles
       const margin = 60;
       const leftWidth = worldHalfW - corridorLength / 2 - margin;
       const rightWidth = leftWidth;
@@ -142,10 +145,10 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
         return m;
       };
 
-      const leftFloor = makeFloor(leftWidth, worldDepth, -((corridorLength / 2) + (leftWidth / 2)));
-      const rightFloor = makeFloor(rightWidth, worldDepth, ((corridorLength / 2) + (rightWidth / 2)));
-      // hallway that connects both sides
-      const bridge = makeFloor(corridorLength, corridorWidth, 0);
+      const leftFloor = makeFloor(leftWidth + 20, worldDepth, -((corridorLength / 2) + (leftWidth / 2) + 10));
+      const rightFloor = makeFloor(rightWidth + 20, worldDepth, ((corridorLength / 2) + (rightWidth / 2) + 10));
+      // hallway that connects both sides; slightly overlap with floors to guarantee connectivity
+      const bridge = makeFloor(corridorLength + 40, corridorWidth + 20, 0);
       navFloorsGroup.add(leftFloor, rightFloor, bridge);
       newScene.add(navFloorsGroup);
 
@@ -216,6 +219,26 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       newInstancedMesh.count = 0;
       newScene.add(newInstancedMesh);
 
+      // Bases visual markers (scale to ground size so they sit near edges)
+      if (bases && bases.army1 && bases.army2) {
+        const baseMat1 = new THREE.MeshLambertMaterial({ color: 0x2244aa });
+        const baseMat2 = new THREE.MeshLambertMaterial({ color: 0xaa2222 });
+        const size = 140;
+        const h = 50;
+        const b1 = new THREE.Mesh(new THREE.BoxGeometry(size, h, size), baseMat1);
+        const b2 = new THREE.Mesh(new THREE.BoxGeometry(size, h, size), baseMat2);
+        const worldX1 = (bases.army1.x - battlefieldWidth / 2) * groundScale;
+        const worldZ1 = (bases.army1.y - battlefieldHeight / 2) * groundScale;
+        const worldX2 = (bases.army2.x - battlefieldWidth / 2) * groundScale;
+        const worldZ2 = (bases.army2.y - battlefieldHeight / 2) * groundScale;
+        b1.position.set(worldX1, h / 2, worldZ1);
+        b2.position.set(worldX2, h / 2, worldZ2);
+        b1.castShadow = b1.receiveShadow = true;
+        b2.castShadow = b2.receiveShadow = true;
+        newScene.add(b1);
+        newScene.add(b2);
+      }
+
 
 
       // Store references
@@ -243,6 +266,30 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             );
             dbg.position.copy(bridge.position);
             newScene.add(dbg);
+          } catch (_) {}
+          // Create a group for nav path debug arrows
+          const dbgGroup = new THREE.Group();
+          dbgGroup.name = 'NavPathDebug';
+          newScene.add(dbgGroup);
+          debugGroupRef.current = dbgGroup;
+
+          // Optionally draw the navmesh in blue for debugging
+          try {
+            if (showNavMesh) {
+              const { navMesh } = getNavResources();
+              if (navMesh) {
+                const helper = new NavMeshHelper(navMesh, {
+                  navMeshMaterial: new THREE.MeshBasicMaterial({
+                    color: 0x0000ff,
+                    wireframe: true,
+                    transparent: false,
+                  }),
+                });
+                helper.renderOrder = 10;
+                navHelperRef.current = helper;
+                newScene.add(helper);
+              }
+            }
           } catch (_) {}
         } catch (e) {
           console.error('Nav init/build failed', e);
@@ -281,6 +328,14 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       // Provide cleanup for this init
       return () => {
         cancelAnimationFrame(rafId);
+        // Remove nav helper if present
+        try {
+          if (navHelperRef.current && newScene) {
+            newScene.remove(navHelperRef.current);
+            if (navHelperRef.current.dispose) navHelperRef.current.dispose();
+          }
+          navHelperRef.current = null;
+        } catch (_) {}
         try { mountEl.removeChild(newRenderer.domElement); } catch (_) {}
         newRenderer.dispose();
       };
@@ -291,6 +346,35 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
     // Cleanup
     return () => { if (typeof cleanup === 'function') cleanup(); };
   }, [battlefieldWidth, battlefieldHeight]);
+
+  // Toggle navmesh helper without reinitializing the whole scene
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    try {
+      const { navMesh } = getNavResources();
+      if (showNavMesh) {
+        if (!navHelperRef.current && navMesh) {
+          const helper = new NavMeshHelper(navMesh, {
+            navMeshMaterial: new THREE.MeshBasicMaterial({
+              color: 0x0000ff,
+              transparent: true,
+              opacity: 0.35,
+              depthWrite: false,
+            }),
+          });
+          navHelperRef.current = helper;
+          scene.add(helper);
+        }
+      } else {
+        if (navHelperRef.current) {
+          scene.remove(navHelperRef.current);
+          if (navHelperRef.current.dispose) navHelperRef.current.dispose();
+          navHelperRef.current = null;
+        }
+      }
+    } catch (_) {}
+  }, [showNavMesh]);
 
   // Update soldier positions when soldiers array changes
   useEffect(() => {
@@ -637,6 +721,36 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       requestAnimationFrame(updateControls);
     };
     updateControls();
+  }, []);
+
+  // Listen for nav debug events and draw yellow arrows on ground
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    const handleDebug = (e) => {
+      if (!debugGroupRef.current) return;
+      const { id, path } = e.detail || {};
+      if (!Array.isArray(path) || path.length < 2) return;
+      // clear old
+      while (debugGroupRef.current.children.length > 200) {
+        const obj = debugGroupRef.current.children.shift();
+        obj && scene.remove(obj);
+      }
+      // draw segments
+      const points = [];
+      for (let i = 0; i < Math.min(path.length, 25); i++) {
+        const p = path[i];
+        points.push(new THREE.Vector3(p.x, 0.3, p.z));
+      }
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
+      const line = new THREE.Line(geometry, material);
+      debugGroupRef.current.add(line);
+    };
+
+    window.addEventListener('nav-debug', handleDebug);
+    return () => window.removeEventListener('nav-debug', handleDebug);
   }, []);
 
   return (

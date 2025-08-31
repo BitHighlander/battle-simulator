@@ -1,5 +1,5 @@
 // Lightweight nav module using recast-navigation npm packages (WASM)
-// Provides: initNav (noop), buildNavForScene, getNavResources, disposeNav
+// Provides: initNav (noop), buildNavForScene, getNavResources, disposeNav, NAV_WORLD_SCALE
 
 import { NavMeshQuery, Crowd, Raw } from 'recast-navigation';
 import { threeToTiledNavMesh } from '@recast-navigation/three';
@@ -10,6 +10,9 @@ let tileCache = null;
 let crowd = null;
 let allocator = null;
 let compressor = null;
+
+// Keep a single source of truth for world scaling between 2D UI space and 3D nav space
+export const NAV_WORLD_SCALE = 4;
 
 export async function initNav() {
   // Ensure WASM is loaded before any generator calls

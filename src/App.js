@@ -25,10 +25,16 @@ function App() {
   });
 
   const [soldiers, setSoldiers] = useState([]);
+  const [bases, setBases] = useState({
+    army1: { x: 0, y: 0, hp: 1000, maxHp: 1000 },
+    army2: { x: 0, y: 0, hp: 1000, maxHp: 1000 },
+  });
+  const spawnTimersRef = useRef({});
   const [battleStarted, setBattleStarted] = useState(false);
   const [winner, setWinner] = useState(null);
   const [messages, setMessages] = useState([]);
   const [celebrationTimer, setCelebrationTimer] = useState(null);
+  const [showNavMesh, setShowNavMesh] = useState(true);
 
   // Hint overlay state
   const [showHint, setShowHint] = useState(true);
@@ -60,81 +66,21 @@ function App() {
     }
 
     // Initialize 50v50 soldiers with grid formations
-    const initializeSoldiers = () => {
-      const newSoldiers = [];
-      const columns = 10;
-      const rows = 5;
-      const soldierSpacingX = Math.max(120, battlefieldWidth / 16);
-      const soldierSpacingY = Math.max(90, battlefieldHeight / 12);
-      const doorX = battlefieldWidth / 2; // hallway is centered in world
-      const armyDistanceFromDoor = Math.max(800, Math.min(1600, battlefieldWidth * 0.7));
-      const leftOriginX = doorX - armyDistanceFromDoor;
-      const rightOriginX = doorX + armyDistanceFromDoor;
-      const startOffsetY = battlefieldHeight / 2 - ((rows - 1) * soldierSpacingY) / 2;
-
-      // Army 1 (left side, facing door to the right)
-      for (let i = 0; i < rows * columns; i++) {
-        const row = Math.floor(i / columns);
-        const col = i % columns;
-        const x = leftOriginX - col * soldierSpacingX;
-        const y = startOffsetY + row * soldierSpacingY;
-
-        const soldier = {
-          id: `army1-${i}`,
-          x: Math.max(20, Math.min(battlefieldWidth - 20, x)),
-          y: Math.max(20, Math.min(battlefieldHeight - 20, y)),
-          health: army1Stats.health,
-          maxHealth: army1Stats.health,
-          damage: army1Stats.damage,
-          speed: army1Stats.speed,
-          morale: army1Stats.morale,
-          maxMorale: army1Stats.morale,
-          team: 'army1',
-          color: 'blue-500',
-          alive: true,
-          state: 'idle',
-          radius: 16,
-        };
-        newSoldiers.push(soldier);
-      }
-
-      // Army 2 (right side, facing door to the left)
-      for (let i = 0; i < rows * columns; i++) {
-        const row = Math.floor(i / columns);
-        const col = i % columns;
-        const x = rightOriginX + col * soldierSpacingX;
-        const y = startOffsetY + row * soldierSpacingY;
-
-        const soldier = {
-          id: `army2-${i}`,
-          x: Math.max(20, Math.min(battlefieldWidth - 20, x)),
-          y: Math.max(20, Math.min(battlefieldHeight - 20, y)),
-          health: army2Stats.health,
-          maxHealth: army2Stats.health,
-          damage: army2Stats.damage,
-          speed: army2Stats.speed,
-          morale: army2Stats.morale,
-          maxMorale: army2Stats.morale,
-          team: 'army2',
-          color: 'red-500',
-          alive: true,
-          state: 'idle',
-          radius: 16,
-        };
-        newSoldiers.push(soldier);
-      }
-
-      // Resolve any initial overlaps from formation layout
-      resolveOverlaps(newSoldiers, battlefieldWidth, battlefieldHeight);
-      setSoldiers(newSoldiers);
-      setArmy1Stats(prev => ({ ...prev, aliveCount: rows * columns }));
-      setArmy2Stats(prev => ({ ...prev, aliveCount: rows * columns }));
+    const initializeScenario = () => {
+      // two bases at each side center
+      const margin = 120;
+      const b1 = { x: margin, y: battlefieldHeight / 2, hp: 2000, maxHp: 2000 };
+      const b2 = { x: battlefieldWidth - margin, y: battlefieldHeight / 2, hp: 2000, maxHp: 2000 };
+      setBases({ army1: b1, army2: b2 });
+      setSoldiers([]);
+      setArmy1Stats(prev => ({ ...prev, aliveCount: 0 }));
+      setArmy2Stats(prev => ({ ...prev, aliveCount: 0 }));
     };
 
     // Initialize soldiers after dimensions are set
     const initTimer = setTimeout(() => {
-      initializeSoldiers();
-      setShowHint(false); // Don't show hint for auto-placement
+      initializeScenario();
+      setShowHint(false);
     }, 500);
 
     return () => {
@@ -147,11 +93,7 @@ function App() {
 
 
   const startSimulation = () => {
-    if (soldiers.length < 20) {
-      alert('Waiting for soldiers to be placed. Please refresh if needed.');
-      return;
-    }
-
+    // Spawn waves: 2 spawn points per side, 5 units every 30s up to 50
     setWinner(null);
     setMessages([]);
     setCelebrationTimer(null);
@@ -176,24 +118,53 @@ function App() {
       return Math.random() * (max - min) + min;
     };
 
-    // Update soldiers' stats according to their army stats
-    const updatedSoldiers = soldiers.map((soldier) => {
-      const armyStats = soldier.team === 'army1' ? army1Stats : army2Stats;
-      return {
-        ...soldier,
-        health: armyStats.health,
-        maxHealth: armyStats.health,
-        damage: applyVariance(armyStats.damage),
-        speed: applyVariance(armyStats.speed),
-        morale: armyStats.morale,
-        maxMorale: armyStats.morale,
-        alive: true,
-        state: 'idle',
-        lastAttack: null,
-      };
-    });
+    // Clear previous
+    setSoldiers([]);
 
-    setSoldiers(updatedSoldiers);
+    const makeSpawn = (team, originX, originY) => {
+      let spawned = 0;
+      const spawnOneWave = () => {
+        if (spawned >= 50) return; // stop after 50
+        const toSpawn = Math.min(5, 50 - spawned);
+        const newUnits = [];
+        for (let i = 0; i < toSpawn; i++) {
+          const angle = (i / toSpawn) * Math.PI * 2;
+          const r = 40 + 12 * i;
+          const x = originX + Math.cos(angle) * r;
+          const y = originY + Math.sin(angle) * r;
+          const armyStats = team === 'army1' ? army1Stats : army2Stats;
+          newUnits.push({
+            id: `${team}-${Date.now()}-${spawned + i}`,
+            x, y,
+            health: armyStats.health,
+            maxHealth: armyStats.health,
+            damage: applyVariance(armyStats.damage),
+            speed: applyVariance(armyStats.speed),
+            morale: armyStats.morale,
+            maxMorale: armyStats.morale,
+            team,
+            color: team === 'army1' ? 'blue-500' : 'red-500',
+            alive: true,
+            state: 'idle',
+            radius: 16,
+          });
+        }
+        setSoldiers(prev => [...prev, ...newUnits]);
+        spawned += toSpawn;
+        if (spawned < 50) {
+          spawnTimersRef.current[`${team}-${originX}-${originY}`] = setTimeout(spawnOneWave, 30000);
+        }
+      };
+      spawnOneWave();
+    };
+
+    // Two spawn points per side near each base
+    const margin = 80;
+    makeSpawn('army1', bases.army1.x + margin, bases.army1.y - 120);
+    makeSpawn('army1', bases.army1.x + margin, bases.army1.y + 120);
+    makeSpawn('army2', bases.army2.x - margin, bases.army2.y - 120);
+    makeSpawn('army2', bases.army2.x - margin, bases.army2.y + 120);
+
     setBattleStarted(true);
   };
 
@@ -290,6 +261,10 @@ function App() {
           target = findClosestEnemy(soldier, enemies);
         }
 
+        // Set destination as enemy base center
+        const enemyBase = soldier.team === 'army1' ? bases.army2 : bases.army1;
+        const targetPoint = { x: enemyBase.x, y: enemyBase.y };
+        // Find closest enemy in range to attack, but path toward base when moving
         if (target) {
           const dx = target.x - soldier.x;
           const dy = target.y - soldier.y;
@@ -307,21 +282,41 @@ function App() {
               const { navMeshQuery } = getNavResources();
               if (navMeshQuery) {
                 // Convert 2D battlefield coords (x,y) to 3D (x,0,z)
-                const start = { x: soldier.x - battlefieldWidth / 2, y: 0, z: soldier.y - battlefieldHeight / 2 };
-                const end = { x: target.x - battlefieldWidth / 2, y: 0, z: target.y - battlefieldHeight / 2 };
-                const result = navMeshQuery.computePath(start, end, {
+                const scale = 4; // must match NAV_WORLD_SCALE
+                const start = { x: (soldier.x - battlefieldWidth / 2) * scale, y: 0, z: (soldier.y - battlefieldHeight / 2) * scale };
+                const end = { x: (targetPoint.x - battlefieldWidth / 2) * scale, y: 0, z: (targetPoint.y - battlefieldHeight / 2) * scale };
+                let result = navMeshQuery.computePath(start, end, {
                   // widen search extents around our large-scale units
                   halfExtents: { x: 2000, y: 500, z: 2000 },
                   maxPathPolys: 512,
                   maxStraightPathPoints: 512,
                 });
+                // Fallback: path to doorway center if direct target path fails
+                if (!result || !result.success || !result.path || result.path.length < 2) {
+                  const doorTarget = { x: 0, y: 0, z: start.z }; // hallway center fallback
+                  result = navMeshQuery.computePath(start, doorTarget, {
+                    halfExtents: { x: 2000, y: 500, z: 2000 },
+                    maxPathPolys: 512,
+                    maxStraightPathPoints: 512,
+                  });
+                }
                 if (result && result.success && result.path && result.path.length > 1) {
                   const next = result.path[1];
-                  const nextDx = (next.x + battlefieldWidth / 2) - soldier.x;
-                  const nextDy = (next.z + battlefieldHeight / 2) - soldier.y;
+                  const nextDx = (next.x / scale + battlefieldWidth / 2) - soldier.x;
+                  const nextDy = (next.z / scale + battlefieldHeight / 2) - soldier.y;
                   const nextDist = Math.hypot(nextDx, nextDy) || 1;
                   moveX = (nextDx / nextDist) * soldier.speed;
                   moveY = (nextDy / nextDist) * soldier.speed;
+                  try {
+                    // emit debug arrows along the computed path
+                    const evt = new CustomEvent('nav-debug', {
+                      detail: {
+                        id: soldier.id,
+                        path: result.path,
+                      },
+                    });
+                    window.dispatchEvent(evt);
+                  } catch (_) {}
                 }
               }
             } catch (_) {}
@@ -556,11 +551,24 @@ function App() {
               </div>
             </div>
           </div>
+          <div className="absolute top-0 right-0 p-4 z-30">
+            <label className="inline-flex items-center space-x-2 bg-gray-900 bg-opacity-70 p-2 rounded">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={showNavMesh}
+                onChange={(e) => setShowNavMesh(e.target.checked)}
+              />
+              <span className="text-white text-xs">Show NavMesh</span>
+            </label>
+          </div>
 
           <Battlefield3D
             soldiers={soldiers}
             battlefieldWidth={battlefieldWidth}
             battlefieldHeight={battlefieldHeight}
+            bases={bases}
+            showNavMesh={showNavMesh}
           />
           {winner && (
             <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-30">
@@ -588,6 +596,16 @@ function App() {
             Reset Battle
           </button>
         </div>
+        <div className="max-w-md mx-auto mb-6 flex items-center gap-3">
+          <input
+            id="toggle-navmesh"
+            type="checkbox"
+            className="h-4 w-4"
+            checked={showNavMesh}
+            onChange={(e) => setShowNavMesh(e.target.checked)}
+          />
+          <label htmlFor="toggle-navmesh" className="text-sm text-white">Show NavMesh (debug)</label>
+        </div>
 
         {/* Messages */}
         {/* <div className="mb-4">
@@ -606,6 +624,7 @@ function App() {
           <div>
             <h2 className="text-2xl font-semibold mb-2 text-blue-400">Army 1 Stats</h2>
             <div className="grid grid-cols-1 gap-4">
+              <div className="text-sm text-white">Base HP: {bases.army1.hp} / {bases.army1.maxHp}</div>
               {Object.keys(army1Stats)
                 .filter((stat) => !['aliveCount', 'kills'].includes(stat))
                 .map((stat) => (
@@ -632,6 +651,7 @@ function App() {
           <div>
             <h2 className="text-2xl font-semibold mb-2 text-red-400">Army 2 Stats</h2>
             <div className="grid grid-cols-1 gap-4">
+              <div className="text-sm text-white">Base HP: {bases.army2.hp} / {bases.army2.maxHp}</div>
               {Object.keys(army2Stats)
                 .filter((stat) => !['aliveCount', 'kills'].includes(stat))
                 .map((stat) => (
