@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 
 function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const mountRef = useRef(null);
@@ -10,6 +12,10 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const [renderer, setRenderer] = useState(null);
   const [instancedMesh, setInstancedMesh] = useState(null);
   const [dummy, setDummy] = useState(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const baseModelsRef = useRef({ army1: null, army2: null });
+  const soldierObjectsRef = useRef(new Map()); // soldierId -> { object3D, mixer, actions }
+  const clockRef = useRef(new THREE.Clock());
 
 
   useEffect(() => {
@@ -80,7 +86,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       ground.receiveShadow = true;
       newScene.add(ground);
 
-      // Create dummy soldier geometry for instancing (cylinder) - larger size
+      // Create instanced mesh fallback (cylinders) if models not loaded
       const soldierHeight = 20;
       const soldierRadius = 8;
       const soldierGeometry = new THREE.CylinderGeometry(soldierRadius, soldierRadius, soldierHeight, 12);
@@ -89,24 +95,14 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       const newDummy = new THREE.Mesh(soldierGeometry, soldierMaterial);
       setDummy(newDummy);
 
-      // Create direction indicator (small cone/arrow)
-      const arrowGeometry = new THREE.ConeGeometry(3, 10, 12);
-      const arrowMaterial = new THREE.MeshLambertMaterial({ color: 0xffff00 }); // Yellow arrow
-      const arrowMesh = new THREE.Mesh(arrowGeometry, arrowMaterial);
-      arrowMesh.position.y = soldierHeight * 0.5 + 2; // On top of cylinder
-      arrowMesh.rotation.x = Math.PI / 2; // Point along +Z
-      newDummy.add(arrowMesh);
-
-      // Create instanced mesh for soldiers
-      const maxSoldiers = 100; // Plenty for 20 soldiers
       const newInstancedMesh = new THREE.InstancedMesh(
         soldierGeometry,
         soldierMaterial,
-        maxSoldiers
+        100
       );
       newInstancedMesh.castShadow = true;
       newInstancedMesh.receiveShadow = true;
-      newInstancedMesh.count = 0; // Start with no visible instances
+      newInstancedMesh.count = 0;
       newScene.add(newInstancedMesh);
 
 
@@ -123,6 +119,11 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       let rafId = 0;
       const animate = () => {
         rafId = requestAnimationFrame(animate);
+        // Advance any active mixers when using GLTFs
+        const delta = clockRef.current.getDelta();
+        soldierObjectsRef.current.forEach((entry) => {
+          if (entry.mixer) entry.mixer.update(delta);
+        });
         newRenderer.render(newScene, newCamera);
       };
       animate();
@@ -142,12 +143,68 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
 
   // Update soldier positions when soldiers array changes
   useEffect(() => {
-    if (!instancedMesh || !dummy) return;
+    if (!sceneRef.current) return;
 
-    // Update soldier instances (1:1 mapping from 2D to 3D)
+    const scene = sceneRef.current;
+
+    // If models are loaded, render them per-soldier; otherwise use instancing fallback
+    if (modelsLoaded && baseModelsRef.current.army1 && baseModelsRef.current.army2) {
+      // Create/update 3D objects per soldier
+      const activeIds = new Set();
+      soldiers.forEach((soldier) => {
+        if (!soldier.alive) return;
+        activeIds.add(soldier.id);
+        let entry = soldierObjectsRef.current.get(soldier.id);
+        if (!entry) {
+          const base = soldier.team === 'army1' ? baseModelsRef.current.army1 : baseModelsRef.current.army2;
+          const cloned = cloneSkeleton(base);
+          cloned.traverse((obj) => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+          scene.add(cloned);
+          const mixer = new THREE.AnimationMixer(cloned);
+          entry = { object3D: cloned, mixer, actions: {} };
+          soldierObjectsRef.current.set(soldier.id, entry);
+        }
+
+        const { object3D, mixer } = entry;
+        const worldX = soldier.x - battlefieldWidth / 2;
+        const worldZ = soldier.y - battlefieldHeight / 2;
+        object3D.position.set(worldX, 0, worldZ);
+
+        // Face direction
+        let targetRotation = soldier.team === 'army1' ? 0 : Math.PI;
+        if (soldier.target && soldier.target.alive) {
+          const dx = soldier.target.x - soldier.x;
+          const dy = soldier.target.y - soldier.y;
+          targetRotation = Math.atan2(dx, dy);
+        }
+        object3D.rotation.y = targetRotation;
+
+        // Simple state-to-speed mapping
+        if (soldier.state === 'attacking') {
+          // Future: map to attack clip if available
+        } else if (soldier.state === 'retreating') {
+          // Future: map to run clip
+        }
+      });
+
+      // Remove stale soldier objects
+      const toRemove = [];
+      soldierObjectsRef.current.forEach((entry, id) => {
+        if (!activeIds.has(id)) {
+          scene.remove(entry.object3D);
+          toRemove.push(id);
+        }
+      });
+      toRemove.forEach((id) => soldierObjectsRef.current.delete(id));
+
+      // Hide instanced fallback when models are used
+      if (instancedMesh) instancedMesh.count = 0;
+      return;
+    }
+
+    if (!instancedMesh || !dummy) return;
     const visibleSoldiers = soldiers.filter(s => s.alive);
     instancedMesh.count = visibleSoldiers.length;
-
     visibleSoldiers.forEach((soldier, index) => {
       if (index >= instancedMesh.count) return;
 
@@ -223,6 +280,38 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [camera, renderer, battlefieldWidth, battlefieldHeight]);
+
+  // Load GLTF models once
+  useEffect(() => {
+    let cancelled = false;
+    const loader = new GLTFLoader();
+    const loadModel = async (path) => {
+      const gltf = await loader.loadAsync(path);
+      const scene = gltf.scene || gltf.scenes[0];
+      // Normalize orientation/scale if needed
+      scene.traverse((obj) => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+      return scene;
+    };
+
+    (async () => {
+      try {
+        const [army1Base, army2Base] = await Promise.all([
+          loadModel('/models/male_knight.glb'),
+          loadModel('/models/skeleton_01.glb')
+        ]);
+        if (!cancelled) {
+          baseModelsRef.current.army1 = army1Base;
+          baseModelsRef.current.army2 = army2Base;
+          setModelsLoaded(true);
+        }
+      } catch (e) {
+        // If loading fails, keep using instanced cylinders
+        if (!cancelled) setModelsLoaded(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
 
 
 
