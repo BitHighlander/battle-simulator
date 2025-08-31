@@ -58,17 +58,22 @@ function App() {
       resizeObserver.observe(battlefieldRef.current);
     }
 
-    // Initialize 10v10 soldiers with larger spacing (bigger map feel)
+    // Initialize 50v50 soldiers with grid formations
     const initializeSoldiers = () => {
       const newSoldiers = [];
-      const soldierSpacing = 160; // Larger spacing
+      const columns = 10; // grid columns per army
+      const rows = 5; // rows per army (10 x 5 = 50)
+      const soldierSpacingX = Math.max(100, battlefieldWidth / 20);
+      const soldierSpacingY = Math.max(100, battlefieldHeight / 12);
+      const startOffsetX = 250;
+      const startOffsetY = battlefieldHeight / 2 - ((rows - 1) * soldierSpacingY) / 2;
 
       // Army 1 (left side, facing right)
-      for (let i = 0; i < 10; i++) {
-        const row = Math.floor(i / 5);
-        const col = i % 5;
-        const x = 250 + col * soldierSpacing;
-        const y = battlefieldHeight / 2 - 200 + row * soldierSpacing;
+      for (let i = 0; i < rows * columns; i++) {
+        const row = Math.floor(i / columns);
+        const col = i % columns;
+        const x = startOffsetX + col * soldierSpacingX;
+        const y = startOffsetY + row * soldierSpacingY;
 
         const soldier = {
           id: `army1-${i}`,
@@ -90,11 +95,11 @@ function App() {
       }
 
       // Army 2 (right side, facing left)
-      for (let i = 0; i < 10; i++) {
-        const row = Math.floor(i / 5);
-        const col = i % 5;
-        const x = battlefieldWidth - 250 - col * soldierSpacing;
-        const y = battlefieldHeight / 2 - 200 + row * soldierSpacing;
+      for (let i = 0; i < rows * columns; i++) {
+        const row = Math.floor(i / columns);
+        const col = i % columns;
+        const x = battlefieldWidth - startOffsetX - col * soldierSpacingX;
+        const y = startOffsetY + row * soldierSpacingY;
 
         const soldier = {
           id: `army2-${i}`,
@@ -116,8 +121,8 @@ function App() {
       }
 
       setSoldiers(newSoldiers);
-      setArmy1Stats(prev => ({ ...prev, aliveCount: 10 }));
-      setArmy2Stats(prev => ({ ...prev, aliveCount: 10 }));
+      setArmy1Stats(prev => ({ ...prev, aliveCount: rows * columns }));
+      setArmy2Stats(prev => ({ ...prev, aliveCount: rows * columns }));
     };
 
     // Initialize soldiers after dimensions are set
@@ -498,7 +503,7 @@ function App() {
             className="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={battleStarted || soldiers.length === 0}
           >
-            {battleStarted ? 'Battle in Progress' : 'Start 10v10 Battle'}
+            {battleStarted ? 'Battle in Progress' : 'Start 50v50 Battle'}
           </button>
           <button
             onClick={resetSimulation}

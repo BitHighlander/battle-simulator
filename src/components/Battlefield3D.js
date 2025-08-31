@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -119,6 +120,25 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       ground.rotation.x = -Math.PI / 2;
       ground.receiveShadow = true;
       newScene.add(ground);
+
+      // Procedural sky
+      const sky = new Sky();
+      sky.scale.setScalar(maxDim * 10);
+      newScene.add(sky);
+      // Configure sky uniforms
+      const elevation = 35;
+      const azimuth = 180;
+      const sun = new THREE.Vector3();
+      const phi = THREE.MathUtils.degToRad(90 - elevation);
+      const theta = THREE.MathUtils.degToRad(azimuth);
+      sun.setFromSphericalCoords(1, phi, theta);
+      sky.material.uniforms['turbidity'].value = 10;
+      sky.material.uniforms['rayleigh'].value = 2;
+      sky.material.uniforms['mieCoefficient'].value = 0.005;
+      sky.material.uniforms['mieDirectionalG'].value = 0.8;
+      sky.material.uniforms['sunPosition'].value.copy(sun);
+      // Optional light-match
+      newScene.fog = new THREE.Fog(new THREE.Color(0x87CEEB), maxDim * 2, maxDim * 20);
 
       // Create instanced mesh fallback (cylinders) if models not loaded
       const soldierHeight = 20;
