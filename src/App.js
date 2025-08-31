@@ -1,6 +1,7 @@
 // src/App.js
 
 import React, { useState, useEffect, useRef } from 'react';
+import { getNavResources } from './nav/nav';
 import Battlefield3D from './components/Battlefield3D';
 import './index.css';
 
@@ -61,18 +62,21 @@ function App() {
     // Initialize 50v50 soldiers with grid formations
     const initializeSoldiers = () => {
       const newSoldiers = [];
-      const columns = 10; // grid columns per army
-      const rows = 5; // rows per army (10 x 5 = 50)
-      const soldierSpacingX = Math.max(100, battlefieldWidth / 20);
-      const soldierSpacingY = Math.max(100, battlefieldHeight / 12);
-      const startOffsetX = 250;
+      const columns = 10;
+      const rows = 5;
+      const soldierSpacingX = Math.max(100, battlefieldWidth / 18);
+      const soldierSpacingY = Math.max(80, battlefieldHeight / 14);
+      const doorX = battlefieldWidth / 2; // hallway is centered in world
+      const armyDistanceFromDoor = Math.max(250, Math.min(500, battlefieldWidth * 0.2));
+      const leftOriginX = doorX - armyDistanceFromDoor;
+      const rightOriginX = doorX + armyDistanceFromDoor;
       const startOffsetY = battlefieldHeight / 2 - ((rows - 1) * soldierSpacingY) / 2;
 
-      // Army 1 (left side, facing right)
+      // Army 1 (left side, facing door to the right)
       for (let i = 0; i < rows * columns; i++) {
         const row = Math.floor(i / columns);
         const col = i % columns;
-        const x = startOffsetX + col * soldierSpacingX;
+        const x = leftOriginX - col * soldierSpacingX;
         const y = startOffsetY + row * soldierSpacingY;
 
         const soldier = {
@@ -94,11 +98,11 @@ function App() {
         newSoldiers.push(soldier);
       }
 
-      // Army 2 (right side, facing left)
+      // Army 2 (right side, facing door to the left)
       for (let i = 0; i < rows * columns; i++) {
         const row = Math.floor(i / columns);
         const col = i % columns;
-        const x = battlefieldWidth - startOffsetX - col * soldierSpacingX;
+        const x = rightOriginX + col * soldierSpacingX;
         const y = startOffsetY + row * soldierSpacingY;
 
         const soldier = {
@@ -296,10 +300,26 @@ function App() {
           const attackRange = soldier.radius + target.radius + 10;
           if (distance > attackRange) {
             soldier.state = 'moving';
-
-            // Calculate desired movement
+            // Use navmesh straight path if available
             let moveX = (dx / (distance || 1)) * soldier.speed;
             let moveY = (dy / (distance || 1)) * soldier.speed;
+            try {
+              const { navMeshQuery } = getNavResources();
+              if (navMeshQuery) {
+                // Convert 2D battlefield coords (x,y) to 3D (x,0,z)
+                const start = { x: soldier.x - battlefieldWidth / 2, y: 0, z: soldier.y - battlefieldHeight / 2 };
+                const end = { x: target.x - battlefieldWidth / 2, y: 0, z: target.y - battlefieldHeight / 2 };
+                const path = navMeshQuery.computePath(start, end);
+                if (path && path.length > 1) {
+                  const next = path[Math.min(1, path.length - 1)];
+                  const nextDx = (next.x + battlefieldWidth / 2) - soldier.x;
+                  const nextDy = (next.z + battlefieldHeight / 2) - soldier.y;
+                  const nextDist = Math.hypot(nextDx, nextDy) || 1;
+                  moveX = (nextDx / nextDist) * soldier.speed;
+                  moveY = (nextDy / nextDist) * soldier.speed;
+                }
+              }
+            } catch (_) {}
 
             // Separation steering from nearby units
             const neighbors = soldiers.filter((s) => s.id !== soldier.id && s.alive);

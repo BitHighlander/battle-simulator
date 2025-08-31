@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { initNav, buildNavForScene } from '../nav/nav';
 
 function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const mountRef = useRef(null);
@@ -121,6 +122,62 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       ground.receiveShadow = true;
       newScene.add(ground);
 
+      // Invisible nav floors to create a long, thick hallway (door) through a full-width wall
+      const navFloorsGroup = new THREE.Group();
+      const worldHalfW = (battlefieldWidth * groundScale) / 2;
+      const worldDepth = battlefieldHeight * groundScale;
+      const corridorWidth = Math.max(120, Math.min(260, battlefieldHeight * 0.18)); // narrow in Z
+      const corridorLength = Math.max(400, Math.min(battlefieldWidth * 0.5, 900)); // long in X
+      const margin = 60;
+      const leftWidth = worldHalfW - corridorLength / 2 - margin;
+      const rightWidth = leftWidth;
+      const thickness = 2;
+
+      const makeFloor = (w, d, x) => {
+        const geo = new THREE.BoxGeometry(Math.max(10, w), thickness, d);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x003300 });
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, thickness * 0.5, 0);
+        m.visible = false; // nav-only helpers
+        return m;
+      };
+
+      const leftFloor = makeFloor(leftWidth, worldDepth, -((corridorLength / 2) + (leftWidth / 2)));
+      const rightFloor = makeFloor(rightWidth, worldDepth, ((corridorLength / 2) + (rightWidth / 2)));
+      // hallway that connects both sides
+      const bridge = makeFloor(corridorLength, corridorWidth, 0);
+      navFloorsGroup.add(leftFloor, rightFloor, bridge);
+      newScene.add(navFloorsGroup);
+
+      // Visual wall spanning entire map with a single doorway corridor
+      const obstacles = [];
+      const obstacleGroup = new THREE.Group();
+      const wallMat = new THREE.MeshLambertMaterial({ color: 0x665544 });
+      const wallHeight = Math.max(150, battlefieldHeight * 0.25);
+      const wallThickness = Math.max(150, Math.min(280, battlefieldWidth * 0.12)); // very thick
+      const segmentDepth = (worldDepth - corridorWidth) / 2;
+      // two wall segments (top and bottom), leaving a doorway gap at center
+      const wallTopGeo = new THREE.BoxGeometry(wallThickness, wallHeight, segmentDepth);
+      const wallBotGeo = new THREE.BoxGeometry(wallThickness, wallHeight, segmentDepth);
+      const wallTop = new THREE.Mesh(wallTopGeo, wallMat);
+      const wallBot = new THREE.Mesh(wallBotGeo, wallMat);
+      wallTop.castShadow = wallBot.castShadow = true;
+      wallTop.receiveShadow = wallBot.receiveShadow = true;
+      wallTop.position.set(0, wallHeight * 0.5, -((corridorWidth / 2) + (segmentDepth / 2)));
+      wallBot.position.set(0, wallHeight * 0.5, ((corridorWidth / 2) + (segmentDepth / 2)));
+      obstacleGroup.add(wallTop, wallBot);
+      // side walls to make the doorway a long hallway
+      const sideWallWidth = Math.max(80, corridorWidth * 0.25);
+      const sideWallGeo = new THREE.BoxGeometry(corridorLength, wallHeight, sideWallWidth);
+      const sideLeft = new THREE.Mesh(sideWallGeo, wallMat);
+      const sideRight = new THREE.Mesh(sideWallGeo, wallMat);
+      sideLeft.castShadow = sideRight.castShadow = true;
+      sideLeft.receiveShadow = sideRight.receiveShadow = true;
+      sideLeft.position.set(0, wallHeight * 0.5, -(corridorWidth / 2 + sideWallWidth / 2));
+      sideRight.position.set(0, wallHeight * 0.5, (corridorWidth / 2 + sideWallWidth / 2));
+      obstacleGroup.add(sideLeft, sideRight);
+      newScene.add(obstacleGroup);
+
       // Procedural sky
       const sky = new Sky();
       sky.scale.setScalar(maxDim * 10);
@@ -168,6 +225,17 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
 
       // Mount renderer
       mountEl.appendChild(newRenderer.domElement);
+
+      // Build navmesh after scene ground/obstacles exist
+      (async () => {
+        try {
+          await initNav();
+          // Build navmesh only on left/right areas and the central hallway bridge
+          buildNavForScene([leftFloor, rightFloor, bridge], obstacles);
+        } catch (e) {
+          console.error('Nav init/build failed', e);
+        }
+      })();
 
       // Animation loop
       let rafId = 0;
