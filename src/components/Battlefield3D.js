@@ -24,6 +24,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
   const puddlesRef = useRef([]); // { mesh, removeAt }
   const debugGroupRef = useRef(null); // nav path debug
   const navHelperRef = useRef(null); // navmesh debug helper
+  const baseGroupRef = useRef(null); // castles/bases container
 
   // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
@@ -219,25 +220,11 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
       newInstancedMesh.count = 0;
       newScene.add(newInstancedMesh);
 
-      // Bases visual markers (scale to ground size so they sit near edges)
-      if (bases && bases.army1 && bases.army2) {
-        const baseMat1 = new THREE.MeshLambertMaterial({ color: 0x2244aa });
-        const baseMat2 = new THREE.MeshLambertMaterial({ color: 0xaa2222 });
-        const size = 140;
-        const h = 50;
-        const b1 = new THREE.Mesh(new THREE.BoxGeometry(size, h, size), baseMat1);
-        const b2 = new THREE.Mesh(new THREE.BoxGeometry(size, h, size), baseMat2);
-        const worldX1 = (bases.army1.x - battlefieldWidth / 2) * groundScale;
-        const worldZ1 = (bases.army1.y - battlefieldHeight / 2) * groundScale;
-        const worldX2 = (bases.army2.x - battlefieldWidth / 2) * groundScale;
-        const worldZ2 = (bases.army2.y - battlefieldHeight / 2) * groundScale;
-        b1.position.set(worldX1, h / 2, worldZ1);
-        b2.position.set(worldX2, h / 2, worldZ2);
-        b1.castShadow = b1.receiveShadow = true;
-        b2.castShadow = b2.receiveShadow = true;
-        newScene.add(b1);
-        newScene.add(b2);
-      }
+      // Create a container for base/castle meshes; actual contents populated in a separate effect
+      const baseGroup = new THREE.Group();
+      baseGroup.name = 'Bases';
+      newScene.add(baseGroup);
+      baseGroupRef.current = baseGroup;
 
 
 
@@ -253,8 +240,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
       (async () => {
         try {
           await initNav();
-          // Build navmesh only on left/right areas and the central hallway bridge
-          buildNavForScene([leftFloor, rightFloor, bridge], obstacles);
+          // Build navmesh using floors plus wall meshes so the nav hugs walls closely
+          buildNavForScene([leftFloor, rightFloor, bridge, wallTop, wallBot, sideLeft, sideRight], obstacles);
           // Optional visual debug overlay on the bridge
           try {
             const bridgeGeo = bridge.geometry;
@@ -346,6 +333,133 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
     // Cleanup
     return () => { if (typeof cleanup === 'function') cleanup(); };
   }, [battlefieldWidth, battlefieldHeight]);
+
+  // Create/update castles for each base when bases or dimensions change
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const baseGroup = baseGroupRef.current;
+    if (!scene || !baseGroup) return;
+
+    // Helper to dispose a mesh/group hierarchy
+    const disposeObject = (obj) => {
+      try {
+        obj.traverse((child) => {
+          if (child.isMesh) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+              if (Array.isArray(child.material)) child.material.forEach((m) => m && m.dispose && m.dispose());
+              else if (child.material.dispose) child.material.dispose();
+            }
+          }
+        });
+      } catch (_) {}
+    };
+
+    // Clear previous
+    while (baseGroup.children.length > 0) {
+      const obj = baseGroup.children.pop();
+      scene.remove(obj);
+      disposeObject(obj);
+    }
+
+    if (!bases || !bases.army1 || !bases.army2) return;
+
+    // Castle builder: cylindrical tower with battlements and a flag
+    const makeCastle = (primaryColor, accentColor) => {
+      const group = new THREE.Group();
+      // Tower
+      const towerRadius = 70;
+      const towerHeight = 180;
+      const towerGeo = new THREE.CylinderGeometry(towerRadius, towerRadius, towerHeight, 24, 1, true);
+      const towerMat = new THREE.MeshLambertMaterial({ color: primaryColor });
+      const tower = new THREE.Mesh(towerGeo, towerMat);
+      tower.castShadow = true;
+      tower.receiveShadow = true;
+      tower.position.y = towerHeight / 2;
+      group.add(tower);
+
+      // Parapet ring
+      const parapetHeight = 30;
+      const parapetGeo = new THREE.CylinderGeometry(towerRadius + 8, towerRadius + 8, parapetHeight, 24, 1, true);
+      const parapetMat = new THREE.MeshLambertMaterial({ color: primaryColor });
+      const parapet = new THREE.Mesh(parapetGeo, parapetMat);
+      parapet.castShadow = true;
+      parapet.receiveShadow = true;
+      parapet.position.y = towerHeight + parapetHeight / 2 - 6;
+      group.add(parapet);
+
+      // Crenellations
+      const crenelCount = 12;
+      const crenelWidth = 18;
+      const crenelDepth = 10;
+      const crenelHeight = 26;
+      const crenelGeo = new THREE.BoxGeometry(crenelWidth, crenelHeight, crenelDepth);
+      const crenelMat = new THREE.MeshLambertMaterial({ color: primaryColor });
+      for (let i = 0; i < crenelCount; i++) {
+        const angle = (i / crenelCount) * Math.PI * 2;
+        const x = Math.sin(angle) * (towerRadius + 12);
+        const z = Math.cos(angle) * (towerRadius + 12);
+        const m = new THREE.Mesh(crenelGeo, crenelMat);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        m.position.set(x, towerHeight + parapetHeight - 4, z);
+        m.rotation.y = angle;
+        group.add(m);
+      }
+
+      // Door plate
+      const doorWidth = 40;
+      const doorHeight = 70;
+      const doorGeo = new THREE.BoxGeometry(doorWidth, doorHeight, 6);
+      const doorMat = new THREE.MeshLambertMaterial({ color: accentColor });
+      const door = new THREE.Mesh(doorGeo, doorMat);
+      door.castShadow = true;
+      door.receiveShadow = true;
+      // Place on local +Z side (we'll rotate the whole castle to face center)
+      door.position.set(0, doorHeight / 2, towerRadius + 3);
+      group.add(door);
+
+      // Base platform
+      const baseGeo = new THREE.CylinderGeometry(towerRadius + 14, towerRadius + 14, 14, 24);
+      const baseMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.castShadow = true;
+      base.receiveShadow = true;
+      base.position.y = 7;
+      group.add(base);
+
+      return group;
+    };
+
+    const castle1 = makeCastle(0x2244aa, 0x99bbff);
+    const castle2 = makeCastle(0xaa2222, 0xff9999);
+
+    const worldX1 = bases.army1.x - battlefieldWidth / 2;
+    const worldZ1 = bases.army1.y - battlefieldHeight / 2;
+    const worldX2 = bases.army2.x - battlefieldWidth / 2;
+    const worldZ2 = bases.army2.y - battlefieldHeight / 2;
+
+    castle1.position.set(worldX1, 0, worldZ1);
+    castle2.position.set(worldX2, 0, worldZ2);
+
+    // Face each castle toward map center (0,0)
+    const faceAngle1 = Math.atan2(-worldX1, -worldZ1);
+    const faceAngle2 = Math.atan2(-worldX2, -worldZ2);
+    castle1.rotation.y = faceAngle1;
+    castle2.rotation.y = faceAngle2;
+
+    baseGroup.add(castle1);
+    baseGroup.add(castle2);
+
+    return () => {
+      // Clean up when deps change
+      [castle1, castle2].forEach((obj) => {
+        if (!obj) return;
+        baseGroup.remove(obj);
+        disposeObject(obj);
+      });
+    };
+  }, [bases, battlefieldWidth, battlefieldHeight]);
 
   // Toggle navmesh helper without reinitializing the whole scene
   useEffect(() => {

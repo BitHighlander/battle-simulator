@@ -32,22 +32,22 @@ export function buildNavForScene(sceneMeshes, obstacles = [], generatorConfig = 
   // Build a tiled navmesh with tile cache so we can add obstacles
   const keepIntermediates = false;
   const defaultConfig = {
-    // use coarse voxel/cell sizes to avoid huge grids (our world is in pixels)
-    cs: 20,
-    ch: 10,
+    // tighter voxelization so nav hugs walls/corridors
+    cs: 8,
+    ch: 4,
     walkableSlopeAngle: 50,
-    walkableHeight: 40,
-    walkableClimb: 20,
-    walkableRadius: 20,
-    maxEdgeLen: 200,
-    maxSimplificationError: 4,
-    minRegionArea: 400,
-    mergeRegionArea: 800,
+    walkableHeight: 24,
+    walkableClimb: 8,
+    walkableRadius: 6,
+    maxEdgeLen: 60,
+    maxSimplificationError: 1.2,
+    minRegionArea: 64,
+    mergeRegionArea: 128,
     maxVertsPerPoly: 6,
-    detailSampleDist: 60,
-    detailSampleMaxError: 10,
+    detailSampleDist: 24,
+    detailSampleMaxError: 2.0,
     // tiled
-    tileSize: 32,
+    tileSize: 48,
   };
 
   const config = { ...defaultConfig, ...generatorConfig };
