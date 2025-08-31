@@ -82,6 +82,8 @@ function App() {
     const initTimer = setTimeout(() => {
       initializeScenario();
       setShowHint(false);
+      // Auto-start the game on load
+      setTimeout(() => startGame(), 50);
     }, 500);
 
     return () => {
@@ -102,7 +104,7 @@ function App() {
 
 
 
-  const startSimulation = () => {
+  const startGame = () => {
     // Spawn waves: 2 spawn points per side, 5 units every 30s up to 50
     setWinner(null);
     setMessages([]);
@@ -186,7 +188,7 @@ function App() {
     setBattleStarted(true);
   };
 
-  const resetSimulation = () => {
+  const resetGame = () => {
     setBattleStarted(false);
     setSoldiers([]);
     setWinner(null);
@@ -542,7 +544,7 @@ function App() {
             <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 z-10 pointer-events-none">
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-white mb-2">10 vs 10 Battle Ready</h2>
-                <p className="text-lg text-gray-200">Click "Start Simulation" to begin the battle</p>
+                <p className="text-lg text-gray-200">Click "Start Game" to begin the battle</p>
                 <p className="text-sm text-gray-300 mt-2">Use mouse to zoom and rotate the view</p>
               </div>
             </div>
@@ -601,14 +603,14 @@ function App() {
         {/* Control Buttons */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 mb-10 max-w-md mx-auto">
           <button
-            onClick={startSimulation}
+            onClick={startGame}
             className="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={battleStarted || soldiers.length === 0}
           >
             {battleStarted ? 'Battle in Progress' : 'Start 50v50 Battle'}
           </button>
           <button
-            onClick={resetSimulation}
+            onClick={resetGame}
             className="bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition font-semibold"
           >
             Reset Battle

@@ -25,6 +25,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
   const debugGroupRef = useRef(null); // nav path debug
   const navHelperRef = useRef(null); // navmesh debug helper
   const baseGroupRef = useRef(null); // castles/bases container
+  const [sceneReady, setSceneReady] = useState(false);
 
   // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
@@ -225,6 +226,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
       baseGroup.name = 'Bases';
       newScene.add(baseGroup);
       baseGroupRef.current = baseGroup;
+      setSceneReady(true);
 
 
 
@@ -338,7 +340,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
   useEffect(() => {
     const scene = sceneRef.current;
     const baseGroup = baseGroupRef.current;
-    if (!scene || !baseGroup) return;
+    if (!scene || !baseGroup || !sceneReady) return;
 
     // Helper to dispose a mesh/group hierarchy
     const disposeObject = (obj) => {
@@ -358,7 +360,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
     // Clear previous
     while (baseGroup.children.length > 0) {
       const obj = baseGroup.children.pop();
-      scene.remove(obj);
+      baseGroup.remove(obj);
       disposeObject(obj);
     }
 
@@ -461,7 +463,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
         disposeObject(obj);
       });
     };
-  }, [bases, battlefieldWidth, battlefieldHeight]);
+  }, [sceneReady, bases, battlefieldWidth, battlefieldHeight]);
 
   // Toggle navmesh helper without reinitializing the whole scene
   useEffect(() => {
