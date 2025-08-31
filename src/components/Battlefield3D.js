@@ -434,10 +434,12 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
     const castle1 = makeCastle(0x2244aa, 0x99bbff);
     const castle2 = makeCastle(0xaa2222, 0xff9999);
 
-    const worldX1 = bases.army1.x - battlefieldWidth / 2;
-    const worldZ1 = bases.army1.y - battlefieldHeight / 2;
-    const worldX2 = bases.army2.x - battlefieldWidth / 2;
-    const worldZ2 = bases.army2.y - battlefieldHeight / 2;
+    // Mirror ground scaling so bases sit at the far edges of the visible map
+    const groundScale = 4; // must match the scale used when creating the ground
+    const worldX1 = (bases.army1.x - battlefieldWidth / 2) * groundScale;
+    const worldZ1 = (bases.army1.y - battlefieldHeight / 2) * groundScale;
+    const worldX2 = (bases.army2.x - battlefieldWidth / 2) * groundScale;
+    const worldZ2 = (bases.army2.y - battlefieldHeight / 2) * groundScale;
 
     castle1.position.set(worldX1, 0, worldZ1);
     castle2.position.set(worldX2, 0, worldZ2);

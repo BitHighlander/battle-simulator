@@ -1,6 +1,7 @@
 // src/App.js
 
 import React, { useState, useEffect, useRef } from 'react';
+import { NAV_WORLD_SCALE } from './nav/nav';
 import { getNavResources } from './nav/nav';
 import Battlefield3D from './components/Battlefield3D';
 import './index.css';
@@ -90,6 +91,15 @@ function App() {
     };
   }, [battlefieldRef]);
 
+  // Keep bases pinned to the edges whenever battlefield size changes
+  useEffect(() => {
+    const margin = 120;
+    setBases((prev) => ({
+      army1: { ...prev.army1, x: margin, y: battlefieldHeight / 2 },
+      army2: { ...prev.army2, x: battlefieldWidth - margin, y: battlefieldHeight / 2 },
+    }));
+  }, [battlefieldWidth, battlefieldHeight]);
+
 
 
   const startSimulation = () => {
@@ -118,7 +128,9 @@ function App() {
       return Math.random() * (max - min) + min;
     };
 
-    // Clear previous
+    // Clear previous timers and soldiers
+    Object.values(spawnTimersRef.current || {}).forEach((t) => clearTimeout(t));
+    spawnTimersRef.current = {};
     setSoldiers([]);
 
     const makeSpawn = (team, originX, originY) => {
@@ -150,6 +162,12 @@ function App() {
           });
         }
         setSoldiers(prev => [...prev, ...newUnits]);
+        // Update alive counts per team
+        if (team === 'army1') {
+          setArmy1Stats((prev) => ({ ...prev, aliveCount: prev.aliveCount + toSpawn }));
+        } else {
+          setArmy2Stats((prev) => ({ ...prev, aliveCount: prev.aliveCount + toSpawn }));
+        }
         spawned += toSpawn;
         if (spawned < 50) {
           spawnTimersRef.current[`${team}-${originX}-${originY}`] = setTimeout(spawnOneWave, 30000);
@@ -282,7 +300,7 @@ function App() {
               const { navMeshQuery } = getNavResources();
               if (navMeshQuery) {
                 // Convert 2D battlefield coords (x,y) to 3D (x,0,z)
-                const scale = 4; // must match NAV_WORLD_SCALE
+                const scale = NAV_WORLD_SCALE;
                 const start = { x: (soldier.x - battlefieldWidth / 2) * scale, y: 0, z: (soldier.y - battlefieldHeight / 2) * scale };
                 const end = { x: (targetPoint.x - battlefieldWidth / 2) * scale, y: 0, z: (targetPoint.y - battlefieldHeight / 2) * scale };
                 let result = navMeshQuery.computePath(start, end, {
