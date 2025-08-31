@@ -46,7 +46,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       const byKw = animations.find((clip) => clip.name.toLowerCase().includes(kw));
       if (byKw) return byKw;
     }
-    return null;
+    // Fallback to first available clip
+    return animations[0] || null;
   };
 
 
@@ -75,8 +76,6 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       );
       newCamera.position.set(0, maxDim * 0.8, maxDim * 1.2);
       newCamera.lookAt(0, 0, 0);
-      console.log('Camera positioned at:', newCamera.position, 'looking at:', new THREE.Vector3(0, 0, 0));
-      console.log('Ground plane size:', battlefieldWidth * 3, 'x', battlefieldHeight * 3);
 
       // Add OrbitControls for zoom and camera movement
       const controls = new OrbitControls(newCamera, mountRef.current);
@@ -201,18 +200,16 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
 
     const scene = sceneRef.current;
 
-    console.log('Rendering soldiers:', soldiers.length, 'modelsLoaded:', modelsLoaded);
+    
 
     // If models are loaded, render them per-soldier; otherwise use instancing fallback
     if (modelsLoaded && baseModelsRef.current.army1 && baseModelsRef.current.army2) {
       // Create/update 3D objects per soldier
       const activeIds = new Set();
       soldiers.forEach((soldier) => {
-        if (!soldier.alive) return;
-        activeIds.add(soldier.id);
+        // Allow dead soldiers to remain briefly to play death animation
         let entry = soldierObjectsRef.current.get(soldier.id);
         if (!entry) {
-          console.log('Creating soldier:', soldier.id, soldier.team);
           const base = soldier.team === 'army1' ? baseModelsRef.current.army1 : baseModelsRef.current.army2;
           const animations = soldier.team === 'army1' ? animationsRef.current.army1 : animationsRef.current.army2;
           const cloned = cloneSkeleton(base);
@@ -227,7 +224,6 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             }
           });
           scene.add(cloned);
-          console.log('Soldier created:', soldier.id, 'meshes:', meshCount, 'scale:', cloned.scale.x, 'added to scene');
           const mixer = new THREE.AnimationMixer(cloned);
 
           // Set up animation actions with safe fallbacks
@@ -255,7 +251,14 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             actions.walk.setLoop(THREE.LoopRepeat, Infinity);
           }
 
-          entry = { object3D: cloned, mixer, actions };
+          // If no basic actions were found, fall back to first clip as idle
+          if (!actions.idle && animations && animations.length > 0) {
+            const fallback = mixer.clipAction(animations[0]);
+            fallback.setLoop(THREE.LoopRepeat, Infinity);
+            actions.idle = fallback;
+          }
+
+          entry = { object3D: cloned, mixer, actions, removeAt: null, hasPlayedDeath: false, currentAnimation: null };
           soldierObjectsRef.current.set(soldier.id, entry);
         }
 
@@ -278,29 +281,51 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
         let targetAnimation = 'idle';
         if (!soldier.alive && actions.death) {
           targetAnimation = 'death';
+          if (!entry.removeAt) {
+            entry.removeAt = Date.now() + 2000; // ~2s grace to show death
+          }
         } else if (soldier.state === 'attacking' && actions.attack) {
           targetAnimation = 'attack';
         } else if ((soldier.state === 'moving' || soldier.state === 'retreating') && actions.walk) {
           targetAnimation = 'walk';
+        } else if (soldier.state === 'in_combat' && actions.attack) {
+          // loop subtle attack-ready/idle if available; fallback to idle when attack not looping
+          targetAnimation = actions.walk ? 'walk' : 'idle';
         } else if (actions.idle) {
           targetAnimation = 'idle';
         }
 
-        // Cross-fade to the target animation if different
+        // Cross-fade with special handling for death (play once)
         const allKeys = Object.keys(actions);
-        const playing = allKeys.find((k) => actions[k].isRunning());
-        if (actions[targetAnimation]) {
-          const targetAction = actions[targetAnimation];
-          if (playing && playing !== targetAnimation) {
-            targetAction.reset().fadeIn(0.15).play();
-            actions[playing].fadeOut(0.15);
-          } else if (!targetAction.isRunning()) {
-            targetAction.reset().play();
+        const getAction = (name) => actions[name];
+        if (targetAnimation === 'death' && getAction('death')) {
+          if (!entry.hasPlayedDeath) {
+            // Stop others and play death once
+            allKeys.forEach((k) => {
+              if (k !== 'death' && actions[k]) actions[k].stop();
+            });
+            getAction('death').reset().setLoop(THREE.LoopOnce, 1).play();
+            entry.hasPlayedDeath = true;
+            entry.currentAnimation = 'death';
+            if (!entry.removeAt) entry.removeAt = Date.now() + 2000;
           }
-        } else if (actions.idle && targetAnimation !== 'idle') {
-          // Fallback to idle if expected action missing
-          const idleAction = actions.idle;
-          if (!idleAction.isRunning()) idleAction.reset().play();
+          // Do not restart death after it finishes
+        } else {
+          const next = getAction(targetAnimation) || getAction('idle');
+          if (next && entry.currentAnimation !== targetAnimation) {
+            const current = entry.currentAnimation ? getAction(entry.currentAnimation) : null;
+            if (current && current.isRunning && current.isRunning()) {
+              next.reset().fadeIn(0.12).play();
+              current.fadeOut(0.12);
+            } else {
+              next.reset().play();
+            }
+            entry.currentAnimation = targetAnimation;
+          }
+        }
+        const keepAliveForDeath = !soldier.alive && entry.removeAt && Date.now() < entry.removeAt;
+        if (soldier.alive || keepAliveForDeath) {
+          activeIds.add(soldier.id);
         }
       });
 
@@ -315,25 +340,21 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       });
       toRemove.forEach((id) => soldierObjectsRef.current.delete(id));
 
-      console.log('Active 3D soldier objects:', soldierObjectsRef.current.size, 'Scene children:', scene.children.length);
+      
 
       // Debug: Log soldier positions
-      const positions = [];
-      soldierObjectsRef.current.forEach((entry, id) => {
-        positions.push({id, position: entry.object3D.position, visible: entry.object3D.visible});
-      });
-      console.log('Soldier positions summary:', positions);
+      
 
       // Hide instanced fallback when models are used
       if (instancedMesh) instancedMesh.count = 0;
       return;
     }
 
-    console.log('Using cylinder fallback');
+    
     if (!instancedMesh || !dummy) return;
     const visibleSoldiers = soldiers.filter(s => s.alive);
     instancedMesh.count = visibleSoldiers.length;
-    console.log('Cylinder count:', instancedMesh.count);
+    
     visibleSoldiers.forEach((soldier, index) => {
       if (index >= instancedMesh.count) return;
 
@@ -444,16 +465,14 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       try {
         const [army1Data, army2Data] = await Promise.all([
           loadModel('/models/male_knight.glb'),
-          loadModel('/models/male_rogue.glb')
+          loadModel('/models/skeleton_01.glb')
         ]);
         if (!cancelled) {
           baseModelsRef.current.army1 = army1Data.scene;
           baseModelsRef.current.army2 = army2Data.scene;
           animationsRef.current.army1 = army1Data.animations;
           animationsRef.current.army2 = army2Data.animations;
-          console.log('Models loaded successfully:', army1Data.animations.length, army2Data.animations.length, 'animations');
           setModelsLoaded(true);
-          console.log('modelsLoaded set to true');
         }
       } catch (e) {
         console.error('Model loading failed:', e);

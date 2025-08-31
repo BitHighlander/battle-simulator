@@ -291,8 +291,10 @@ function App() {
           const dy = target.y - soldier.y;
           const distance = Math.hypot(dx, dy);
 
-          // Move towards target if not in attack range
-          if (distance > soldier.radius + target.radius) {
+          // Move towards target if not within effective attack range
+          // Add a small buffer so units attack before overlap-resolution pushes them apart
+          const attackRange = soldier.radius + target.radius + 6;
+          if (distance > attackRange) {
             soldier.state = 'moving';
 
             // Calculate desired movement
@@ -326,10 +328,10 @@ function App() {
             soldier.x += moveX;
             soldier.y += moveY;
           } else {
-            // Attack with cooldown
+            // In range: adopt attacking posture; apply damage on cooldown
+            soldier.state = 'attacking';
             const now = Date.now();
-            if (!soldier.lastAttack || now - soldier.lastAttack > 1000) {
-              soldier.state = 'attacking';
+            if (!soldier.lastAttack || now - soldier.lastAttack > 800) {
               target.health -= soldier.damage;
               soldier.lastAttack = now;
               if (target.health <= 0) {
