@@ -1,7 +1,7 @@
 // src/App.js
 
 import React, { useState, useEffect, useRef } from 'react';
-import Soldier from './components/Soldier';
+import Battlefield3D from './components/Battlefield3D';
 import './index.css';
 
 function App() {
@@ -29,16 +29,6 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [celebrationTimer, setCelebrationTimer] = useState(null);
 
-  // State to track the current army being placed
-  const [currentArmy, setCurrentArmy] = useState('army1');
-
-  // New states for drawing soldiers by dragging
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [lastSoldierPosition, setLastSoldierPosition] = useState(null);
-
-  // Minimum distance between soldiers when drawing
-  const MIN_DISTANCE = 20; // Adjust this value as needed
-
   // Hint overlay state
   const [showHint, setShowHint] = useState(true);
 
@@ -61,155 +51,85 @@ function App() {
     // Update dimensions on window resize
     window.addEventListener('resize', updateDimensions);
 
-    // Hide the hint after 7 seconds
-    const hintTimer = setTimeout(() => {
-      setShowHint(false);
-    }, 7000); // 7 seconds
+    // Initialize 10v10 soldiers with larger spacing (bigger map feel)
+    const initializeSoldiers = () => {
+      const newSoldiers = [];
+      const soldierSpacing = 160; // Larger spacing
+
+      // Army 1 (left side, facing right)
+      for (let i = 0; i < 10; i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        const x = 250 + col * soldierSpacing;
+        const y = battlefieldHeight / 2 - 200 + row * soldierSpacing;
+
+        const soldier = {
+          id: `army1-${i}`,
+          x: Math.max(20, Math.min(battlefieldWidth - 20, x)),
+          y: Math.max(20, Math.min(battlefieldHeight - 20, y)),
+          health: army1Stats.health,
+          maxHealth: army1Stats.health,
+          damage: army1Stats.damage,
+          speed: army1Stats.speed,
+          morale: army1Stats.morale,
+          maxMorale: army1Stats.morale,
+          team: 'army1',
+          color: 'blue-500',
+          alive: true,
+          state: 'idle',
+          radius: 10,
+        };
+        newSoldiers.push(soldier);
+      }
+
+      // Army 2 (right side, facing left)
+      for (let i = 0; i < 10; i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        const x = battlefieldWidth - 250 - col * soldierSpacing;
+        const y = battlefieldHeight / 2 - 200 + row * soldierSpacing;
+
+        const soldier = {
+          id: `army2-${i}`,
+          x: Math.max(20, Math.min(battlefieldWidth - 20, x)),
+          y: Math.max(20, Math.min(battlefieldHeight - 20, y)),
+          health: army2Stats.health,
+          maxHealth: army2Stats.health,
+          damage: army2Stats.damage,
+          speed: army2Stats.speed,
+          morale: army2Stats.morale,
+          maxMorale: army2Stats.morale,
+          team: 'army2',
+          color: 'red-500',
+          alive: true,
+          state: 'idle',
+          radius: 10,
+        };
+        newSoldiers.push(soldier);
+      }
+
+      setSoldiers(newSoldiers);
+      setArmy1Stats(prev => ({ ...prev, aliveCount: 10 }));
+      setArmy2Stats(prev => ({ ...prev, aliveCount: 10 }));
+    };
+
+    // Initialize soldiers after dimensions are set
+    const initTimer = setTimeout(() => {
+      initializeSoldiers();
+      setShowHint(false); // Don't show hint for auto-placement
+    }, 500);
 
     return () => {
       window.removeEventListener('resize', updateDimensions);
-      clearTimeout(hintTimer);
+      clearTimeout(initTimer);
     };
-  }, []);
+  }, [battlefieldWidth, battlefieldHeight]);
 
-  // Helper to convert touch coordinates to battlefield coordinates
-  const getTouchPosition = (e) => {
-    const rect = battlefieldRef.current.getBoundingClientRect();
-    const x = e.touches[0].clientX - rect.left;
-    const y = e.touches[0].clientY - rect.top;
-    return { x, y };
-  };
 
-  // Handle mouse down event to start drawing
-  const handleMouseDown = (e) => {
-    if (battleStarted) return; // Don't handle during battle
-    setIsDrawing(true);
-
-    // Hide the hint when the user starts interacting
-    if (showHint) setShowHint(false);
-
-    const rect = battlefieldRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    handleBattlefieldClick(x, y); // Place a soldier at the starting point
-
-    // Update lastSoldierPosition
-    setLastSoldierPosition({ x, y });
-  };
-
-  // Handle touch start event for mobile
-  const handleTouchStart = (e) => {
-    if (battleStarted) return;
-    e.preventDefault(); // Prevent scrolling
-
-    setIsDrawing(true);
-
-    // Hide the hint when the user starts interacting
-    if (showHint) setShowHint(false);
-
-    const { x, y } = getTouchPosition(e);
-    handleBattlefieldClick(x, y);
-    setLastSoldierPosition({ x, y });
-  };
-
-  // Handle mouse up event to stop drawing
-  const handleMouseUp = () => {
-    setIsDrawing(false);
-    setLastSoldierPosition(null);
-  };
-
-  // Handle touch end event to stop drawing
-  const handleTouchEnd = () => {
-    setIsDrawing(false);
-    setLastSoldierPosition(null);
-  };
-
-  // Handle mouse move event to draw soldiers along the path
-  const handleMouseMove = (e) => {
-    if (!isDrawing) return;
-    const rect = battlefieldRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    handleDrawing(x, y);
-  };
-
-  // Handle touch move event for mobile
-  const handleTouchMove = (e) => {
-    if (!isDrawing) return;
-    e.preventDefault(); // Prevent scrolling
-    const { x, y } = getTouchPosition(e);
-    handleDrawing(x, y);
-  };
-
-  // Helper function to handle drawing for both mouse and touch
-  const handleDrawing = (x, y) => {
-    if (lastSoldierPosition) {
-      const dx = x - lastSoldierPosition.x;
-      const dy = y - lastSoldierPosition.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance < MIN_DISTANCE) {
-        // Too close to last soldier, don't add a new one
-        return;
-      }
-    }
-
-    // Add a new soldier at this position
-    handleBattlefieldClick(x, y);
-
-    // Update lastSoldierPosition
-    setLastSoldierPosition({ x, y });
-  };
-
-  // Function to handle adding soldiers at specific coordinates
-  const handleBattlefieldClick = (x, y) => {
-    if (battleStarted) return; // Don't handle clicks during battle
-
-    // Ensure the soldier is within battlefield bounds
-    if (x < 0 || y < 0 || x > battlefieldWidth || y > battlefieldHeight) {
-      return;
-    }
-
-    // Get the stats for the currentArmy
-    const armyStats = currentArmy === 'army1' ? army1Stats : army2Stats;
-
-    const newSoldier = {
-      id: `${currentArmy}-${Date.now()}`, // Use timestamp to ensure unique id
-      x,
-      y,
-      health: armyStats.health,
-      maxHealth: armyStats.health,
-      damage: armyStats.damage,
-      speed: armyStats.speed,
-      morale: armyStats.morale,
-      maxMorale: armyStats.morale,
-      team: currentArmy,
-      color: currentArmy === 'army1' ? 'blue-500' : 'red-500',
-      alive: true,
-      state: 'idle',
-      radius: 10,
-    };
-
-    setSoldiers((prevSoldiers) => [...prevSoldiers, newSoldier]);
-
-    // Update alive count immediately for the respective army
-    if (currentArmy === 'army1') {
-      setArmy1Stats((prevStats) => ({
-        ...prevStats,
-        aliveCount: prevStats.aliveCount + 1,
-      }));
-    } else {
-      setArmy2Stats((prevStats) => ({
-        ...prevStats,
-        aliveCount: prevStats.aliveCount + 1,
-      }));
-    }
-  };
 
   const startSimulation = () => {
-    if (soldiers.length === 0) {
-      alert('Please place soldiers on the battlefield before starting the simulation.');
+    if (soldiers.length < 20) {
+      alert('Waiting for soldiers to be placed. Please refresh if needed.');
       return;
     }
 
@@ -509,27 +429,18 @@ function App() {
     >
       {/* Battlefield */}
       <div
-        ref={battlefieldRef}
-        onMouseDown={handleMouseDown} // Handle mouse down
-        onMouseUp={handleMouseUp} // Handle mouse up
-        onMouseMove={handleMouseMove} // Handle mouse move
-        onTouchStart={handleTouchStart} // Handle touch start
-        onTouchMove={handleTouchMove} // Handle touch move
-        onTouchEnd={handleTouchEnd} // Handle touch end
         className="relative w-full p-4 bg-gradient-to-b from-gray-800 to-gray-900 overflow-hidden flex-grow noscroll"
       >
         <div
-          className="relative battlefield bg-cover bg-center h-full rounded-lg shadow-lg"
-          style={{
-            backgroundImage: "url('https://i.pinimg.com/originals/7c/ca/0a/7cca0a0f83174b9e3ccaf43ec09558cc.jpg')",
-          }}
+          className="relative battlefield h-full rounded-lg shadow-lg bg-gray-800"
         >
-          {/* Hint Overlay */}
-          {showHint && !battleStarted && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 z-10">
+          {/* Status Overlay */}
+          {!battleStarted && soldiers.length > 0 && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 z-10 pointer-events-none">
               <div className="text-center">
-                <h2 className="text-3xl font-bold text-white mb-4 animate-pulse">Click and drag to place soldiers</h2>
-                <p className="text-lg text-gray-200">Select an army below and draw formations on the battlefield</p>
+                <h2 className="text-2xl font-bold text-white mb-2">10 vs 10 Battle Ready</h2>
+                <p className="text-lg text-gray-200">Click "Start Simulation" to begin the battle</p>
+                <p className="text-sm text-gray-300 mt-2">Use mouse to zoom and rotate the view</p>
               </div>
             </div>
           )}
@@ -556,9 +467,11 @@ function App() {
             </div>
           </div>
 
-          {soldiers.map((soldier) => (
-            <Soldier key={soldier.id} soldier={soldier} />
-          ))}
+          <Battlefield3D
+            soldiers={soldiers}
+            battlefieldWidth={battlefieldWidth}
+            battlefieldHeight={battlefieldHeight}
+          />
           {winner && (
             <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-30">
               <h1 className="text-5xl font-bold text-white">{winner.toUpperCase()} WINS!</h1>
@@ -569,35 +482,20 @@ function App() {
 
       {/* Controls */}
       <div className="w-full p-4 bg-gray-800">
-        {/* Army Selection Buttons */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-6 mb-10">
-          <button
-            onClick={() => setCurrentArmy('army1')}
-            className={`px-6 py-3 rounded font-semibold transition ${
-              currentArmy === 'army1' ? 'bg-blue-600 text-white' : 'bg-gray-600 text-white hover:bg-blue-500'
-            }`}
-          >
-            Select Army 1
-          </button>
-          <button
-            onClick={() => setCurrentArmy('army2')}
-            className={`px-6 py-3 rounded font-semibold transition ${
-              currentArmy === 'army2' ? 'bg-red-600 text-white' : 'bg-gray-600 text-white hover:bg-red-500'
-            }`}
-          >
-            Select Army 2
-          </button>
+        {/* Control Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 mb-10 max-w-md mx-auto">
           <button
             onClick={startSimulation}
-            className="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition font-semibold"
+            className="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={battleStarted || soldiers.length === 0}
           >
-            Start Simulation
+            {battleStarted ? 'Battle in Progress' : 'Start 10v10 Battle'}
           </button>
           <button
             onClick={resetSimulation}
             className="bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition font-semibold"
           >
-            Reset
+            Reset Battle
           </button>
         </div>
 
