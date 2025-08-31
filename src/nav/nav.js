@@ -1,7 +1,7 @@
 // Lightweight nav module using recast-navigation npm packages (WASM)
 // Provides: initNav (noop), buildNavForScene, getNavResources, disposeNav
 
-import { NavMeshQuery, Crowd } from 'recast-navigation';
+import { NavMeshQuery, Crowd, Raw } from 'recast-navigation';
 import { threeToTiledNavMesh } from '@recast-navigation/three';
 
 let navMesh = null;
@@ -11,7 +11,17 @@ let crowd = null;
 let allocator = null;
 let compressor = null;
 
-export async function initNav() { return; }
+export async function initNav() {
+  // Ensure WASM is loaded before any generator calls
+  if (Raw && Raw.Module) return;
+  const core = await import('@recast-navigation/core');
+  if (core && typeof core.init === 'function') {
+    await core.init();
+  } else {
+    const { default: wasmFactory } = await import('@recast-navigation/wasm');
+    Raw.Module = await wasmFactory();
+  }
+}
 
 // sceneMeshes: THREE.Mesh[] used for navmesh (e.g., ground plane and static geometry)
 // obstacles: array of { type: 'box'|'cylinder', position:{x,y,z}, halfExtents?, angle?, radius?, height? }
@@ -44,6 +54,10 @@ export function buildNavForScene(sceneMeshes, obstacles = [], generatorConfig = 
   if (!tnResult.success) throw new Error('Failed to generate tiled navmesh');
   navMesh = tnResult.navMesh;
   navMeshQuery = new NavMeshQuery(navMesh);
+  // Expand default query extents so nearest-poly/path queries work at our scene scale
+  if (navMeshQuery && navMeshQuery.defaultQueryHalfExtents) {
+    navMeshQuery.defaultQueryHalfExtents = { x: 2000, y: 500, z: 2000 };
+  }
 
   // Add requested obstacles
   // TileCache disabled; obstacles are visual-only for now

@@ -64,10 +64,10 @@ function App() {
       const newSoldiers = [];
       const columns = 10;
       const rows = 5;
-      const soldierSpacingX = Math.max(100, battlefieldWidth / 18);
-      const soldierSpacingY = Math.max(80, battlefieldHeight / 14);
+      const soldierSpacingX = Math.max(120, battlefieldWidth / 16);
+      const soldierSpacingY = Math.max(90, battlefieldHeight / 12);
       const doorX = battlefieldWidth / 2; // hallway is centered in world
-      const armyDistanceFromDoor = Math.max(250, Math.min(500, battlefieldWidth * 0.2));
+      const armyDistanceFromDoor = Math.max(800, Math.min(1600, battlefieldWidth * 0.7));
       const leftOriginX = doorX - armyDistanceFromDoor;
       const rightOriginX = doorX + armyDistanceFromDoor;
       const startOffsetY = battlefieldHeight / 2 - ((rows - 1) * soldierSpacingY) / 2;
@@ -309,9 +309,14 @@ function App() {
                 // Convert 2D battlefield coords (x,y) to 3D (x,0,z)
                 const start = { x: soldier.x - battlefieldWidth / 2, y: 0, z: soldier.y - battlefieldHeight / 2 };
                 const end = { x: target.x - battlefieldWidth / 2, y: 0, z: target.y - battlefieldHeight / 2 };
-                const path = navMeshQuery.computePath(start, end);
-                if (path && path.length > 1) {
-                  const next = path[Math.min(1, path.length - 1)];
+                const result = navMeshQuery.computePath(start, end, {
+                  // widen search extents around our large-scale units
+                  halfExtents: { x: 2000, y: 500, z: 2000 },
+                  maxPathPolys: 512,
+                  maxStraightPathPoints: 512,
+                });
+                if (result && result.success && result.path && result.path.length > 1) {
+                  const next = result.path[1];
                   const nextDx = (next.x + battlefieldWidth / 2) - soldier.x;
                   const nextDy = (next.z + battlefieldHeight / 2) - soldier.y;
                   const nextDist = Math.hypot(nextDx, nextDy) || 1;

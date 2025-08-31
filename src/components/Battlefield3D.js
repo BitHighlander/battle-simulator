@@ -232,6 +232,18 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
           await initNav();
           // Build navmesh only on left/right areas and the central hallway bridge
           buildNavForScene([leftFloor, rightFloor, bridge], obstacles);
+          // Optional visual debug overlay on the bridge
+          try {
+            const bridgeGeo = bridge.geometry;
+            const w = bridgeGeo.parameters.width || corridorLength;
+            const d = bridgeGeo.parameters.depth || corridorWidth;
+            const dbg = new THREE.Mesh(
+              new THREE.BoxGeometry(w, 0.2, d),
+              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.1 })
+            );
+            dbg.position.copy(bridge.position);
+            newScene.add(dbg);
+          } catch (_) {}
         } catch (e) {
           console.error('Nav init/build failed', e);
         }
