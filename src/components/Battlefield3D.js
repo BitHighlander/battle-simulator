@@ -19,6 +19,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
   const animationsRef = useRef({ army1: [], army2: [] });
   const soldierObjectsRef = useRef(new Map()); // soldierId -> { object3D, mixer, actions }
   const clockRef = useRef(new THREE.Clock());
+  const puddlesRef = useRef([]); // { mesh, removeAt }
 
   // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
@@ -177,6 +178,23 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
         soldierObjectsRef.current.forEach((entry) => {
           if (entry.mixer) entry.mixer.update(delta);
         });
+
+        // Fade and cleanup blood puddles
+        if (puddlesRef.current.length > 0) {
+          const now = Date.now();
+          for (let i = puddlesRef.current.length - 1; i >= 0; i--) {
+            const p = puddlesRef.current[i];
+            if (p.mesh.material.opacity > 0.05) {
+              p.mesh.material.opacity = Math.max(0, p.mesh.material.opacity - delta * 0.1);
+            }
+            if (now > p.removeAt) {
+              newScene.remove(p.mesh);
+              if (p.mesh.geometry) p.mesh.geometry.dispose();
+              if (p.mesh.material) p.mesh.material.dispose();
+              puddlesRef.current.splice(i, 1);
+            }
+          }
+        }
         newRenderer.render(newScene, newCamera);
       };
       animate();
@@ -209,6 +227,10 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       soldiers.forEach((soldier) => {
         // Allow dead soldiers to remain briefly to play death animation
         let entry = soldierObjectsRef.current.get(soldier.id);
+        // Do not create new objects for already-dead soldiers
+        if (!entry && !soldier.alive) {
+          return;
+        }
         if (!entry) {
           const base = soldier.team === 'army1' ? baseModelsRef.current.army1 : baseModelsRef.current.army2;
           const animations = soldier.team === 'army1' ? animationsRef.current.army1 : animationsRef.current.army2;
@@ -326,6 +348,17 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
         const keepAliveForDeath = !soldier.alive && entry.removeAt && Date.now() < entry.removeAt;
         if (soldier.alive || keepAliveForDeath) {
           activeIds.add(soldier.id);
+        } else if (!soldier.alive && entry.removeAt && Date.now() >= entry.removeAt) {
+          // Spawn a small red puddle at the death location
+          const puddleRadius = 20;
+          const geometry = new THREE.CircleGeometry(puddleRadius, 24);
+          const material = new THREE.MeshBasicMaterial({ color: 0x660000, transparent: true, opacity: 0.8 });
+          const puddle = new THREE.Mesh(geometry, material);
+          puddle.rotation.x = -Math.PI / 2;
+          puddle.position.copy(entry.object3D.position.clone());
+          puddle.position.y = 0.1; // slightly above ground to avoid z-fight
+          scene.add(puddle);
+          puddlesRef.current.push({ mesh: puddle, removeAt: Date.now() + 7000 });
         }
       });
 

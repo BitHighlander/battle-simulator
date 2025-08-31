@@ -89,7 +89,7 @@ function App() {
           color: 'blue-500',
           alive: true,
           state: 'idle',
-          radius: 12,
+          radius: 16,
         };
         newSoldiers.push(soldier);
       }
@@ -115,7 +115,7 @@ function App() {
           color: 'red-500',
           alive: true,
           state: 'idle',
-          radius: 12,
+          radius: 16,
         };
         newSoldiers.push(soldier);
       }
@@ -293,7 +293,7 @@ function App() {
 
           // Move towards target if not within effective attack range
           // Add a small buffer so units attack before overlap-resolution pushes them apart
-          const attackRange = soldier.radius + target.radius + 6;
+          const attackRange = soldier.radius + target.radius + 10;
           if (distance > attackRange) {
             soldier.state = 'moving';
 
@@ -449,8 +449,8 @@ function App() {
 
   // Enforce non-overlapping by resolving pairwise overlaps (circle bounds)
   const resolveOverlaps = (units, width, height) => {
-    const maxIterations = 6;
-    const padding = 1.5; // extra spacing
+    const maxIterations = 8;
+    const padding = 4; // extra spacing
     for (let iter = 0; iter < maxIterations; iter++) {
       let anyMoved = false;
       for (let i = 0; i < units.length; i++) {
