@@ -323,10 +323,19 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
             allKeys.forEach((k) => {
               if (k !== 'death' && actions[k]) actions[k].stop();
             });
-            getAction('death').reset().setLoop(THREE.LoopOnce, 1).play();
+            const deathAction = getAction('death');
+            deathAction.reset().setLoop(THREE.LoopOnce, 1).play();
             entry.hasPlayedDeath = true;
             entry.currentAnimation = 'death';
-            // When death animation finishes, schedule removal shortly after
+            // Schedule removal after the clip's duration as a fallback
+            try {
+              const clip = (typeof deathAction.getClip === 'function') ? deathAction.getClip() : (deathAction._clip || null);
+              const durationMs = clip && clip.duration ? clip.duration * 1000 : 2000;
+              entry.removeAt = Date.now() + durationMs + 100;
+            } catch (_) {
+              entry.removeAt = Date.now() + 2100;
+            }
+            // Also listen for finish to tighten removal timing
             if (!entry.deathHandler) {
               const onFinish = (e) => {
                 if (e.action === actions.death) {
