@@ -120,15 +120,8 @@ html, body {
 .battlefield {
   position: relative;
   width: 100%;
-  height: 75vh; /* Adjust as needed */
+  height: 100%; /* Fill available flex area */
   background-color: #f0f0f0;
-}
-
-/* For desktop screens, increase the height to 80% of the viewport height */
-@media (min-width: 1024px) {
-  .battlefield {
-    height: 80vh; /* 80% of the viewport height for desktop screens */
-  }
 }
 
 /* Soldier Styling */

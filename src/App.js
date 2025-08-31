@@ -45,11 +45,18 @@ function App() {
       }
     };
 
-    // Initial call
-    updateDimensions();
+    // Initial call (next frame to ensure layout settled)
+    requestAnimationFrame(updateDimensions);
 
     // Update dimensions on window resize
     window.addEventListener('resize', updateDimensions);
+
+    // Observe container size changes as well
+    let resizeObserver;
+    if (typeof ResizeObserver !== 'undefined' && battlefieldRef.current) {
+      resizeObserver = new ResizeObserver(() => updateDimensions());
+      resizeObserver.observe(battlefieldRef.current);
+    }
 
     // Initialize 10v10 soldiers with larger spacing (bigger map feel)
     const initializeSoldiers = () => {
@@ -121,9 +128,10 @@ function App() {
 
     return () => {
       window.removeEventListener('resize', updateDimensions);
+      if (resizeObserver && battlefieldRef.current) resizeObserver.disconnect();
       clearTimeout(initTimer);
     };
-  }, [battlefieldWidth, battlefieldHeight]);
+  }, [battlefieldRef]);
 
 
 
@@ -422,7 +430,7 @@ function App() {
 
   return (
     <div
-      className="flex flex-col min-h-screen bg-gray-900 prevent-select"
+      className="app-shell flex flex-col min-h-screen bg-gray-900 prevent-select"
       onClick={() => {
         if (showHint) setShowHint(false);
       }}
@@ -432,6 +440,7 @@ function App() {
         className="relative w-full p-4 bg-gradient-to-b from-gray-800 to-gray-900 overflow-hidden flex-grow noscroll"
       >
         <div
+          ref={battlefieldRef}
           className="relative battlefield h-full rounded-lg shadow-lg bg-gray-800"
         >
           {/* Status Overlay */}

@@ -63,16 +63,15 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       newScene.background = new THREE.Color(0x87CEEB); // Sky blue
       sceneRef.current = newScene;
 
+      // Camera positioning using 1:1 world units (pixels to units)
+      const maxDim = Math.max(battlefieldWidth, battlefieldHeight);
       // Camera
       const newCamera = new THREE.PerspectiveCamera(
         75,
         battlefieldWidth / battlefieldHeight,
         0.1,
-        2000
+        maxDim * 10 // far plane based on scene size to avoid clipping
       );
-
-      // Camera positioning using 1:1 world units (pixels to units)
-      const maxDim = Math.max(battlefieldWidth, battlefieldHeight);
       newCamera.position.set(0, maxDim * 0.8, maxDim * 1.2);
       newCamera.lookAt(0, 0, 0);
       console.log('Camera positioned at:', newCamera.position, 'looking at:', new THREE.Vector3(0, 0, 0));
@@ -91,6 +90,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       // Renderer
       const newRenderer = new THREE.WebGLRenderer({ antialias: true });
       newRenderer.setSize(battlefieldWidth, battlefieldHeight);
+      newRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       newRenderer.shadowMap.enabled = true;
       newRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -104,15 +104,15 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       directionalLight.shadow.mapSize.width = 2048;
       directionalLight.shadow.mapSize.height = 2048;
       directionalLight.shadow.camera.near = 0.5;
-      directionalLight.shadow.camera.far = maxDim * 2;
+      directionalLight.shadow.camera.far = maxDim * 4;
       directionalLight.shadow.camera.left = -battlefieldWidth / 2;
       directionalLight.shadow.camera.right = battlefieldWidth / 2;
       directionalLight.shadow.camera.top = battlefieldHeight / 2;
       directionalLight.shadow.camera.bottom = -battlefieldHeight / 2;
       newScene.add(directionalLight);
 
-      // Ground plane (larger than battlefield dimensions)
-      const groundScale = 3; // Make ground 3x larger than battlefield
+      // Ground plane (slightly larger than battlefield dimensions to avoid edge artifacts)
+      const groundScale = 4; // larger to fill view in oblique angles
       const groundGeometry = new THREE.PlaneGeometry(battlefieldWidth * groundScale, battlefieldHeight * groundScale);
       const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x4a5d23 });
       const ground = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -384,6 +384,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight }) {
       camera.aspect = battlefieldWidth / battlefieldHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(battlefieldWidth, battlefieldHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     };
 
     window.addEventListener('resize', handleResize);
