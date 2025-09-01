@@ -36,6 +36,7 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [celebrationTimer, setCelebrationTimer] = useState(null);
   const [showNavMesh, setShowNavMesh] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
 
   // Hint overlay state
   const [showHint, setShowHint] = useState(true);
@@ -150,6 +151,7 @@ function App() {
           newUnits.push({
             id: `${team}-${Date.now()}-${spawned + i}`,
             x, y,
+            heading: team === 'army1' ? 0 : Math.PI,
             health: armyStats.health,
             maxHealth: armyStats.health,
             damage: applyVariance(armyStats.damage),
@@ -255,6 +257,8 @@ function App() {
           // Determine retreat direction
           let retreatX = soldier.team === 'army1' ? -1 : 1;
           soldier.x += retreatX * retreatSpeed;
+          // Face the direction of retreat (left/right along X axis)
+          soldier.heading = Math.atan2(retreatX * retreatSpeed, 0);
           // Remove soldier if they leave the battlefield bounds
           if (soldier.x < 0 || soldier.x > battlefieldWidth) {
             soldier.alive = false;
@@ -365,11 +369,19 @@ function App() {
               moveY += (sepY / neighborCount) * scale;
             }
 
+            // Update heading from final movement vector
+            const moveMag = Math.hypot(moveX, moveY);
+            if (moveMag > 0.0001) {
+              soldier.heading = Math.atan2(moveX, moveY);
+            }
+
             soldier.x += moveX;
             soldier.y += moveY;
           } else {
             // In range: adopt attacking posture; apply damage on cooldown
             soldier.state = 'attacking';
+            // Face the engaged target while attacking
+            soldier.heading = Math.atan2(dx, dy);
             const now = Date.now();
             if (!soldier.lastAttack || now - soldier.lastAttack > 800) {
               target.health -= soldier.damage;
@@ -413,8 +425,47 @@ function App() {
           soldier.target = target;
         }
 
+        // Attack enemy base when in range
+        if (soldier.alive) {
+          const baseDx = enemyBase.x - soldier.x;
+          const baseDy = enemyBase.y - soldier.y;
+          const baseDist = Math.hypot(baseDx, baseDy);
+          const baseAttackRange = 110; // castle radius approximation
+          if (baseDist <= baseAttackRange) {
+            soldier.state = 'attacking';
+            const now = Date.now();
+            if (!soldier.lastBaseAttack || now - soldier.lastBaseAttack > 900) {
+              const dmg = soldier.damage;
+              setBases((prev) => {
+                const next = { ...prev };
+                if (soldier.team === 'army1') {
+                  next.army2 = { ...prev.army2, hp: Math.max(0, prev.army2.hp - dmg) };
+                } else {
+                  next.army1 = { ...prev.army1, hp: Math.max(0, prev.army1.hp - dmg) };
+                }
+                return next;
+              });
+              soldier.lastBaseAttack = now;
+            }
+          }
+        }
+
         return soldier;
       });
+
+      // End game if a base is destroyed
+      if (!winner && (bases.army1.hp <= 0 || bases.army2.hp <= 0)) {
+        battleEnded = true;
+        winningTeam = bases.army1.hp <= 0 ? 'army2' : 'army1';
+        setWinner(winningTeam);
+        setMessages((msgs) => [...msgs, `${winningTeam} destroys the enemy castle!`]);
+        setCelebrationTimer(
+          setTimeout(() => {
+            setBattleStarted(false);
+            setMessages((msgs) => [...msgs, `Game over. ${winningTeam} wins!`]);
+          }, 5000)
+        );
+      }
 
       // After mapping, set celebrating state for the winning team's soldiers
       if (battleEnded) {
@@ -581,6 +632,38 @@ function App() {
               />
               <span className="text-white text-xs">Show NavMesh</span>
             </label>
+            <div className="mt-2" />
+            <label className="inline-flex items-center space-x-2 bg-gray-900 bg-opacity-70 p-2 rounded">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={showGrid}
+                onChange={(e) => setShowGrid(e.target.checked)}
+              />
+              <span className="text-white text-xs">Show Grid (1-20, a-z)</span>
+            </label>
+            <div className="mt-2 bg-gray-900 bg-opacity-70 p-2 rounded text-white text-xs">
+              {(() => {
+                const cols = 20; const rows = 26;
+                const toGrid = (p) => {
+                  if (!p) return '-';
+                  const colSize = battlefieldWidth / cols;
+                  const rowSize = battlefieldHeight / rows;
+                  const col = Math.min(cols, Math.max(1, Math.floor(p.x / colSize) + 1));
+                  const row = Math.min(rows, Math.max(1, Math.floor(p.y / rowSize) + 1));
+                  const letter = String.fromCharCode(96 + row);
+                  return `${letter}${col}`;
+                };
+                const blue = toGrid(bases.army1);
+                const red = toGrid(bases.army2);
+                return (
+                  <div>
+                    <div>Blue base: {blue}</div>
+                    <div>Red base: {red}</div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
 
           <Battlefield3D
@@ -589,6 +672,9 @@ function App() {
             battlefieldHeight={battlefieldHeight}
             bases={bases}
             showNavMesh={showNavMesh}
+            showGrid={showGrid}
+            gridCols={20}
+            gridRows={26}
           />
           {winner && (
             <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-30">

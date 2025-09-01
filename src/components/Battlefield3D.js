@@ -8,7 +8,7 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { initNav, buildNavForScene, getNavResources, NAV_WORLD_SCALE } from '../nav/nav';
 import { NavMeshHelper } from '@recast-navigation/three';
 
-function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, showNavMesh }) {
+function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, showNavMesh, showGrid, gridCols = 20, gridRows = 26 }) {
   const mountRef = useRef(null);
   const controlsRef = useRef(null);
   const sceneRef = useRef(null);
@@ -26,6 +26,9 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
   const navHelperRef = useRef(null); // navmesh debug helper
   const baseGroupRef = useRef(null); // castles/bases container
   const [sceneReady, setSceneReady] = useState(false);
+  const fallbackBarsRef = useRef(new Map()); // id -> { group, fg, width }
+  const castleBarsRef = useRef({ army1: null, army2: null });
+  const gridGroupRef = useRef(null);
 
   // Helper function to find animation clip with graceful fallbacks
   const findAnimation = (animations, name) => {
@@ -285,6 +288,12 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
         }
       })();
 
+      // Create grid overlay group
+      const gridGroup = new THREE.Group();
+      gridGroup.name = 'GridOverlay';
+      newScene.add(gridGroup);
+      gridGroupRef.current = gridGroup;
+
       // Animation loop
       let rafId = 0;
       const animate = () => {
@@ -325,6 +334,13 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
           }
           navHelperRef.current = null;
         } catch (_) {}
+        // Remove grid
+        try {
+          if (gridGroupRef.current) {
+            newScene.remove(gridGroupRef.current);
+          }
+          gridGroupRef.current = null;
+        } catch (_) {}
         try { mountEl.removeChild(newRenderer.domElement); } catch (_) {}
         newRenderer.dispose();
       };
@@ -335,6 +351,80 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
     // Cleanup
     return () => { if (typeof cleanup === 'function') cleanup(); };
   }, [battlefieldWidth, battlefieldHeight]);
+
+  // Draw or hide the labeled grid overlay
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const gridGroup = gridGroupRef.current;
+    if (!scene || !gridGroup) return;
+
+    // Clear existing
+    while (gridGroup.children.length > 0) {
+      const ch = gridGroup.children.pop();
+      scene.remove(ch);
+    }
+    if (!showGrid) return;
+
+    const cols = gridCols;
+    const rows = gridRows;
+    const scale = NAV_WORLD_SCALE;
+    const worldWidth = battlefieldWidth * scale;
+    const worldHeight = battlefieldHeight * scale;
+    const colW = worldWidth / cols;
+    const rowH = worldHeight / rows;
+    const color = 0x3355aa;
+
+    // Grid lines
+    for (let c = 0; c <= cols; c++) {
+      const x = -worldWidth / 2 + c * colW;
+      const p1 = new THREE.Vector3(x, 0.21, -worldHeight / 2);
+      const p2 = new THREE.Vector3(x, 0.21, worldHeight / 2);
+      const geom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+      const mat = new THREE.LineBasicMaterial({ color, linewidth: 1 });
+      gridGroup.add(new THREE.Line(geom, mat));
+    }
+    for (let r = 0; r <= rows; r++) {
+      const z = -worldHeight / 2 + r * rowH;
+      const p1 = new THREE.Vector3(-worldWidth / 2, 0.21, z);
+      const p2 = new THREE.Vector3(worldWidth / 2, 0.21, z);
+      const geom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+      const mat = new THREE.LineBasicMaterial({ color, linewidth: 1 });
+      gridGroup.add(new THREE.Line(geom, mat));
+    }
+
+    // Labels: columns 1..cols along top, rows a.. along left
+    const createLabel = (text, x, z) => {
+      const canvas = document.createElement('canvas');
+      const size = 128;
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0.0)';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 48px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, size / 2, size / 2);
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(60, 60, 1);
+      sprite.position.set(x, 1.2, z);
+      return sprite;
+    };
+
+    for (let c = 1; c <= cols; c++) {
+      const x = -worldWidth / 2 + (c - 0.5) * colW;
+      const z = -battlefieldHeight / 2 - 20;
+      gridGroup.add(createLabel(String(c), x, z));
+    }
+    for (let r = 1; r <= rows; r++) {
+      const z = -worldHeight / 2 + (r - 0.5) * rowH;
+      const x = -worldWidth / 2 - 20;
+      const letter = String.fromCharCode(96 + r);
+      gridGroup.add(createLabel(letter, x, z));
+    }
+  }, [showGrid, gridCols, gridRows, battlefieldWidth, battlefieldHeight]);
 
   // Create/update castles for each base when bases or dimensions change
   useEffect(() => {
@@ -437,7 +527,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
     const castle2 = makeCastle(0xaa2222, 0xff9999);
 
     // Mirror ground scaling so bases sit at the far edges of the visible map
-    const groundScale = 4; // must match the scale used when creating the ground
+    const groundScale = NAV_WORLD_SCALE; // must match the scale used when creating the ground
     const worldX1 = (bases.army1.x - battlefieldWidth / 2) * groundScale;
     const worldZ1 = (bases.army1.y - battlefieldHeight / 2) * groundScale;
     const worldX2 = (bases.army2.x - battlefieldWidth / 2) * groundScale;
@@ -454,6 +544,30 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
 
     baseGroup.add(castle1);
     baseGroup.add(castle2);
+
+    // Create simple 3D world-space health bars for castles
+    const makeBar = (color) => {
+      const group = new THREE.Group();
+      const bg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.6 }));
+      const fgMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
+      const fg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), fgMat);
+      const width = 80; // world units
+      const height = 6; // world units
+      const yOffset = 210; // slightly above tower top
+      bg.scale.set(width, height, 1);
+      fg.scale.set(width, height - 2, 1);
+      bg.position.set(0, yOffset, 0);
+      fg.position.set(0, yOffset, 0.1);
+      group.add(bg);
+      group.add(fg);
+      group.rotateX(-Math.PI / 2);
+      return { group, fg, width };
+    };
+    const bar1 = makeBar(0x66aaff);
+    const bar2 = makeBar(0xff6666);
+    castle1.add(bar1.group);
+    castle2.add(bar2.group);
+    castleBarsRef.current = { army1: bar1, army2: bar2 };
 
     return () => {
       // Clean up when deps change
@@ -518,7 +632,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
           const animations = soldier.team === 'army1' ? animationsRef.current.army1 : animationsRef.current.army2;
           const cloned = cloneSkeleton(base);
           // Set a reasonable scale for the models
-          cloned.scale.setScalar(50); // Make models MUCH larger to test visibility
+          const modelScale = 50;
+          cloned.scale.setScalar(modelScale);
           let meshCount = 0;
           cloned.traverse((obj) => {
             if (obj.isMesh) {
@@ -527,6 +642,26 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
               meshCount++;
             }
           });
+          // Add a simple health bar above the soldier (two planes)
+          const barWidth = 1.2; // world units after scale compensation
+          const barHeight = 0.15;
+          const barBg = new THREE.Mesh(
+            new THREE.PlaneGeometry(barWidth, barHeight),
+            new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.6 })
+          );
+          const barFg = new THREE.Mesh(
+            new THREE.PlaneGeometry(barWidth, barHeight),
+            new THREE.MeshBasicMaterial({ color: soldier.team === 'army1' ? 0x66aaff : 0xff6666, transparent: true, opacity: 0.95 })
+          );
+          const barGroup = new THREE.Group();
+          const inv = 1 / modelScale; // prevent inheriting giant model scale
+          barGroup.scale.set(inv, inv, inv);
+          const yOffset = 3; // 3 world units above feet
+          barBg.position.set(0, yOffset, 0);
+          barFg.position.set(0, yOffset, 0.01);
+          barGroup.add(barBg);
+          barGroup.add(barFg);
+          cloned.add(barGroup);
           scene.add(cloned);
           const mixer = new THREE.AnimationMixer(cloned);
 
@@ -562,7 +697,7 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
             actions.idle = fallback;
           }
 
-          entry = { object3D: cloned, mixer, actions, removeAt: null, hasPlayedDeath: false, currentAnimation: null, deathHandler: null };
+          entry = { object3D: cloned, mixer, actions, removeAt: null, hasPlayedDeath: false, currentAnimation: null, deathHandler: null, barFg, barWidth };
           soldierObjectsRef.current.set(soldier.id, entry);
         }
 
@@ -572,14 +707,19 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
         // Position slightly above ground for visibility
         object3D.position.set(worldX, 5, worldZ);
 
-        // Face direction
-        let targetRotation = soldier.team === 'army1' ? 0 : Math.PI;
-        if (soldier.target && soldier.target.alive) {
-          const dx = soldier.target.x - soldier.x;
-          const dy = soldier.target.y - soldier.y;
-          targetRotation = Math.atan2(dx, dy);
-        }
+        // Face soldier heading if available, otherwise default by team
+        const targetRotation = typeof soldier.heading === 'number'
+          ? soldier.heading
+          : (soldier.team === 'army1' ? 0 : Math.PI);
         object3D.rotation.y = targetRotation;
+
+        // Update health bar scale and face camera
+        if (entry.barFg && camera) {
+          const ratio = Math.max(0.02, (soldier.health || 0) / (soldier.maxHealth || 1));
+          entry.barFg.scale.x = ratio;
+          // keep health bar facing camera
+          entry.barFg.parent && (entry.barFg.parent.quaternion.copy(camera.quaternion));
+        }
 
         // Play animations based on soldier state
         let targetAnimation = 'idle';
@@ -709,20 +849,8 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
       // Place cylinder centered on ground
       dummy.position.set(worldX, 10, worldZ);
 
-      // Calculate direction based on target or movement
-      let targetRotation = 0;
-      if (soldier.target && soldier.target.alive) {
-        // Face towards target
-        const dx = soldier.target.x - soldier.x;
-        const dy = soldier.target.y - soldier.y;
-        targetRotation = Math.atan2(dx, dy);
-      } else if (soldier.state === 'moving') {
-        // Keep current direction when moving
-        targetRotation = dummy.rotation.y;
-      } else {
-        // Default facing (towards enemy side)
-        targetRotation = soldier.team === 'army1' ? 0 : Math.PI;
-      }
+      // Use computed heading when available; fallback by team
+      const targetRotation = typeof soldier.heading === 'number' ? soldier.heading : (soldier.team === 'army1' ? 0 : Math.PI);
 
       // Add animation based on soldier state
       switch (soldier.state) {
@@ -753,12 +881,56 @@ function Battlefield3D({ soldiers, battlefieldWidth, battlefieldHeight, bases, s
 
       instancedMesh.setColorAt(index, color);
       instancedMesh.setMatrixAt(index, dummy.matrix);
+
+      // Draw/Update per-soldier look direction debug (instanced mode)
+      try {
+        if (debugGroupRef.current) {
+          const len = 30;
+          const dirX = Math.sin(targetRotation) * len;
+          const dirZ = Math.cos(targetRotation) * len;
+          const from = new THREE.Vector3(worldX, 0.3, worldZ);
+          const to = new THREE.Vector3(worldX + dirX, 0.3, worldZ + dirZ);
+          const geom = new THREE.BufferGeometry().setFromPoints([from, to]);
+          const mat = new THREE.LineBasicMaterial({ color: 0xffff00 });
+          const line = new THREE.Line(geom, mat);
+          // Limit debug lines
+          if (debugGroupRef.current.children.length > 400) {
+            const victim = debugGroupRef.current.children.shift();
+            if (victim) scene.remove(victim);
+          }
+          debugGroupRef.current.add(line);
+        }
+      } catch (_) {}
     });
 
     instancedMesh.instanceMatrix.needsUpdate = true;
     if (instancedMesh.instanceColor) {
       instancedMesh.instanceColor.needsUpdate = true;
     }
+
+    // Update castle health bars based on bases HP
+    try {
+      if (castleBarsRef.current && castleBarsRef.current.army1 && castleBarsRef.current.army2) {
+        const b1 = castleBarsRef.current.army1;
+        const b2 = castleBarsRef.current.army2;
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+        const a1 = window.__bases?.army1; // fallback if not provided
+        const a2 = window.__bases?.army2;
+        // We cannot access React state here directly; App renders numerical HP in HUD.
+        // So we expose bases via a global update event below.
+        if (b1.pendingRatio != null) {
+          const width = clamp(b1.pendingRatio, 0, 1) * b1.width;
+          b1.fg.scale.x = clamp(b1.pendingRatio, 0.02, 1);
+          b1.fg.position.x = -(b1.width * (1 - b1.fg.scale.x)) / 2;
+          b1.pendingRatio = null;
+        }
+        if (b2.pendingRatio != null) {
+          b2.fg.scale.x = clamp(b2.pendingRatio, 0.02, 1);
+          b2.fg.position.x = -(b2.width * (1 - b2.fg.scale.x)) / 2;
+          b2.pendingRatio = null;
+        }
+      }
+    } catch (_) {}
   }, [soldiers, instancedMesh, dummy, battlefieldWidth, battlefieldHeight]);
 
   // Handle window resize
